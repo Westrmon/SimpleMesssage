@@ -66,7 +66,6 @@ jobs:
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item build/Release/sm_host.exe, build/Release/sm_imgui.dll dist/
           Copy-Item build/Release/plugins dist/plugins -Recurse
-          Copy-Item config dist/config -Recurse
           Copy-Item THIRD-PARTY-NOTICES.txt dist/
 
       - name: 上传产物
@@ -185,7 +184,6 @@ jobs:
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item build/Release/sm_host.exe, build/Release/sm_imgui.dll dist/
           Copy-Item build/Release/plugins dist/plugins -Recurse
-          Copy-Item config dist/config -Recurse
           Copy-Item THIRD-PARTY-NOTICES.txt dist/
 
       - name: 上传产物
