@@ -1,0 +1,28 @@
+# ---- 构建产物 ----
+/build/
+/out/
+/cmake-build-*/
+*.obj
+*.o
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.exe
+*.dll
+*.so
+
+# ---- IDE ----
+.vs/
+.vscode/
+*.user
+*.suo
+*.vcxproj.user
+CMakeUserPresets.json
+
+# ---- 运行时产物 ----
+# 默认数据目录是"exe 同目录优先、不可写时回退 %APPDATA%"，两种情况都会
+# 在源码树里留下这些目录（直接从 build 目录运行宿主时）。
+/logs/
+/data/
+*.bak

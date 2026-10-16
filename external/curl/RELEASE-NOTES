@@ -1,0 +1,53 @@
+curl and libcurl 8.23.1
+
+ Public curl releases:         276
+ Command line options:         278
+ curl_easy_setopt() options:   312
+ Public functions in libcurl:  100
+ Authors:                      1547
+ Contributors:                 3844
+
+This release includes the following changes:
+
+
+This release includes the following bugfixes:
+
+ o pingpong: allow impa to add a prefix directly [7]
+ o runtests: add `-S` option to show success logs [3]
+ o slist: duplicate lists in linear time [6]
+ o test_06_eyeballs: silence Code Quality warning [2]
+ o tests/server: fix crashing with VS2013 and earlier [4]
+ o VERSIONS: add the new rock-solid curl releases
+ o vtls: encode session peer key fields unambiguously [8]
+
+This release includes the following known bugs:
+
+ See https://curl.se/docs/knownbugs.html
+
+For all changes ever done in curl:
+
+ See https://curl.se/changes.html
+
+Planned upcoming removals include:
+
+ o Common Name support in TLS certificates for OpenSSL
+ o HTTP/2 Server Push
+ o local crypto implementations
+ o NTLM
+
+ See https://curl.se/dev/deprecate.html
+
+This release would not have looked like this without help, code, reports and
+advice from friends like these:
+
+  Daniel Stenberg, dataisland, Stefan Eissing, Viktor Szakats
+  (4 contributors)
+
+References to bug reports and discussions on issues:
+
+ [2] = https://curl.se/bug/?i=23367
+ [3] = https://curl.se/bug/?i=23381
+ [4] = https://curl.se/bug/?i=23306
+ [6] = https://curl.se/bug/?i=23361
+ [7] = https://curl.se/bug/?i=23373
+ [8] = https://curl.se/bug/?i=23357

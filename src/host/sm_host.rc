@@ -1,0 +1,25 @@
+// SimpleMessage — 可执行文件的 Windows 资源
+//
+// 【它为什么存在】"应用图标"在 Windows 上就是可执行文件里的一条图标资源：
+// 资源管理器、任务栏、Alt+Tab、以及宿主自己（窗口与托盘在运行期把同一枚图标
+// 读出来，见 platform/win32/icon_win32.cpp）都从这一条取。
+//
+// 【图标文件是多尺寸的】sm_host.ico 由 scripts/win/make-app-icon.ps1 从
+// assets/logo.png 生成，内含 16/20/24/32/40/48/64/128/256 九种尺寸 —— 这样系统
+// 在每种场合都能取到"按目标尺寸画出来的"那一枚，而不是把 256 缩成 16（托盘图标
+// 正好是最显眼的那一处，缩出来的那一个会糊成一团）。改美术资源后重跑那个脚本。
+//
+// 【id 必须与 SM_APP_ICON_ID 一致】见 platform/win32/app_icon_id.h。
+//
+// 【必须显式声明 UTF-8，而且必须写在 #include 之前】rc.exe 没有 MSVC 的 /utf-8：
+// 它按本地代码页读源文件（中文系统上是 936），只有看见 BOM 才认 UTF-8，而本仓库
+// 的源文件都是 UTF-8 无 BOM。按 936 读中文字符会两两错位，错位到行尾就把【下一行】
+// 并进了注释 —— 被并掉的那一行恰好是 #define，宏于是不成立，资源名变成字符串
+// "SM_APP_ICON_ID"，运行期的 LoadImage(MAKEINTRESOURCEW(1)) 自然找不到它。
+// 整件事不报错，症状只是"窗口与托盘悄悄用回系统默认图标"。这行 pragma 让 rc 按
+// UTF-8 读本文；写进被包含的头文件里是不生效的（那时它已经读完了那里）。
+#pragma code_page(65001)
+
+#include "platform/win32/app_icon_id.h"
+
+SM_APP_ICON_ID ICON "sm_host.ico"

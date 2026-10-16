@@ -1,0 +1,84 @@
+SimpleMessage — external/ 下的第三方依赖来源记录
+===============================================
+
+五棵树都是**被 git 跟踪的普通文件**，随仓库一起提交、一起克隆。
+仓库里没有 .gitmodules，也没有任何子模块登记项。
+
+因此 `git clone` 之后依赖就已经在，不需要拉取步骤；
+`git submodule update --init --recursive` 会是"成功但什么都不做"。
+判断依赖是否就绪，看的是目录里有没有 external/imgui/imgui.cpp、
+external/tomlplusplus/toml.hpp 与 external/glfw/CMakeLists.txt，
+不是任何命令的退出码。真正的获取链见 docs/02-宿主设计.md §20。
+
+具体下载时间与操作者未记录 —— 这正是这份文件本应记下、却已经缺失的部分，
+勿据此推断。
+
+依赖 1：Dear ImGui
+------------------
+  版本       1.93.0（external/imgui/imgui.h 的 IMGUI_VERSION）
+  许可证     MIT（external/imgui/LICENSE.txt）
+  来源 URL   https://github.com/ocornut/imgui
+  需要的文件 imgui.cpp / imgui_draw.cpp / imgui_tables.cpp / imgui_widgets.cpp
+             backends/imgui_impl_win32.cpp
+             backends/imgui_impl_dx11.cpp
+             backends/imgui_impl_glfw.cpp
+             backends/imgui_impl_opengl3.cpp
+  接入方式   自己列源文件，以 SHARED 编译成 sm_imgui.dll —— 上游仓库根目录
+             没有 CMakeLists.txt。不使用 docking 与 viewport。
+  备注       CMake 只检查 imgui.cpp 在不在，**不**检查版本。版本错了要到
+             运行时共享上下文才崩，所以版本这条得靠人保证：宿主与所有用
+             imgui 的插件共享同一个 sm_imgui.dll 实例，版本不一致时两边对
+             同一份内部布局的理解不同，症状是随机内存踩踏而不是报错。
+
+依赖 2：toml++
+--------------
+  版本       3.4.0（external/tomlplusplus/toml.hpp 的 TOML_LIB_MAJOR/MINOR/PATCH）
+  许可证     MIT
+  来源 URL   https://github.com/marzer/tomlplusplus
+  需要的文件 toml.hpp（只需这一个；不用它的编译期大文件版本）
+  接入方式   INTERFACE 目标，仅宿主使用
+
+依赖 3：GLFW
+------------
+  版本       3.5.1（external/glfw/include/GLFW/glfw3.h 的 GLFW_VERSION_*）
+  许可证     Zlib/libpng（external/glfw/LICENSE.md）
+  来源 URL   https://github.com/glfw/glfw
+  需要的文件 整棵源码树（含 CMakeLists.txt、include/、src/、CMake/、deps/）
+  接入方式   add_subdirectory，STATIC，关掉 examples/tests/docs/install 四个目标
+  备注       只有 sm_host 用它（imgui 的 GLFW 后端源文件编译进 sm_host，
+             插件完全不接触窗口层），因此进程内只有一份 GLFW 状态。
+             它的版本必须与 imgui 后端期望的 API 对上：imgui_impl_glfw.cpp
+             用到 glfwGetWin32Window()、glfwSetWindowContentScaleCallback()
+             等，这些在 3.5 里才有。
+
+依赖 4：libcurl
+---------------
+  版本       8.23.1-DEV（external/curl/include/curl/curlver.h 的 LIBCURL_VERSION）
+  许可证     curl 许可证（类 MIT，见 external/curl/COPYING）
+  来源 URL   https://github.com/curl/curl
+  需要的文件 整棵源码树（含 CMakeLists.txt、lib/、include/、cmake/）
+  接入方式   add_subdirectory，静态库；关掉 curl.exe / 静态 curl.exe /
+             测试 / 安装四类目标。上游自带可用的 CMakeLists.txt，所以不像
+             imgui 那样自己列源文件 —— 判据是"上游有没有可用的构建脚本"。
+  使用者     仅 source.email 插件（IMAP/IMAPS 客户端）
+  备注       TLS 后端用 Windows 自带的 Schannel，必须**显式**打开
+             （CURL_USE_SCHANNEL 默认 OFF），否则编出来的 libcurl 一个 TLS
+             后端都没有，imaps:// 会以"协议不支持"的形态失败。
+             协议只留 http/https/imap/imaps，其余按 CURL_DISABLE_* 裁掉。
+
+依赖 5：cpp-httplib
+-------------------
+  版本       0.61.0（external/httplib/httplib.h 的 CPPHTTPLIB_VERSION）
+  许可证     MIT
+  来源 URL   https://github.com/yhirose/cpp-httplib
+  需要的文件 httplib.h（只需这一个；不用它自带的 CMake 与测试）
+  接入方式   INTERFACE 目标，附带 ws2_32（WinSock 是它的硬依赖）
+  使用者     仅 source.webhook 插件（本机 HTTP 接收端）
+
+若将来想改成真正的 git 子模块
+-----------------------------
+把依赖留在仓库里换来的是"克隆即可构建"，代价是仓库变大（imgui 约 8.5 MB，
+curl 源码树约 28 MB —— 它是这个仓库里最该早日改成子模块的那一棵）。
+`git submodule add` 不能加进一个非空目录，所以顺序是先 `git rm -r --cached`
+再 `rm -rf`，然后 add 并 checkout 到上面写明的 tag（锁 tag，不要跟分支）。
+改完之后本文件与 docs/02-宿主设计.md §20 都要相应更新。

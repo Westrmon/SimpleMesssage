@@ -1,0 +1,249 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-latest:
+    name: Windows x64
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: 检出
+        uses: actions/checkout@v4
+
+      - name: 配置
+        shell: pwsh
+        run: |
+          cmake -S . -B build -A x64 `
+            -DSM_BUILD_TESTS=ON `
+            -DSM_BUILD_TEST_PLUGINS=ON
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: 构建
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --parallel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: 单元测试
+        shell: pwsh
+        run: |
+          ctest --test-dir build -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: 检查产物齐全
+        shell: pwsh
+        run: |
+          $required = @(
+            'build/Release/sm_host.exe',
+            'build/Release/sm_imgui.dll',
+            'build/Release/plugins/notifier.console.dll',
+            'build/Release/plugins/notifier.imgui.dll',
+            'build/Release/plugins/source.email.dll',
+            'build/Release/plugins/source.webhook.dll'
+          )
+          $missing = $required | Where-Object { -not (Test-Path $_) }
+          if ($missing) {
+            throw ("缺少产物：{0}。请检查构建日志中的 external 依赖缺失或目标被跳过的警告。" -f ($missing -join '、'))
+          }
+
+      - name: 打包
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item build/Release/sm_host.exe, build/Release/sm_imgui.dll dist/
+          Copy-Item build/Release/plugins dist/plugins -Recurse
+          Copy-Item config dist/config -Recurse
+          Copy-Item THIRD-PARTY-NOTICES.txt dist/
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleMessage-win64
+          path: dist/
+          if-no-files-found: error
+
+  build-win7:
+    name: Windows x64（Win7 兼容）
+    runs-on: windows-2022
+    timeout-minutes: 90
+
+    steps:
+      - name: 检出
+        uses: actions/checkout@v4
+
+      - name: 安装或确认 v142 与 Windows SDK
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $installer = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\setup.exe'
+          $sdkInclude = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\Include\10.0.19041.0'
+
+          if (!(Test-Path $vswhere)) {
+            throw "未找到 vswhere：$vswhere"
+          }
+          if (!(Test-Path $installer)) {
+            throw "未找到 Visual Studio Installer：$installer"
+          }
+
+          $vsPath = & $vswhere -latest -products '*' -version '[17.0,18.0)' -property installationPath |
+            Select-Object -First 1
+          if ([string]::IsNullOrWhiteSpace($vsPath)) {
+            throw '未找到 Visual Studio 2022 安装实例。'
+          }
+          $vsPath = $vsPath.Trim()
+          $toolsetRoot = Join-Path $vsPath 'VC\Tools\MSVC'
+          $v142 = Get-ChildItem $toolsetRoot -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like '14.29.*' } |
+            Select-Object -First 1
+
+          if (!$v142 -or !(Test-Path $sdkInclude)) {
+            & $installer modify `
+              --installPath $vsPath `
+              --add Microsoft.VisualStudio.ComponentGroup.VC.Tools.142.x86.x64 `
+              --add Microsoft.VisualStudio.Component.Windows10SDK.19041 `
+              --quiet --wait --norestart
+
+            $installerExitCode = $LASTEXITCODE
+            if ($installerExitCode -ne 0 -and $installerExitCode -ne 3010) {
+              exit $installerExitCode
+            }
+          }
+
+          $v142 = Get-ChildItem $toolsetRoot -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like '14.29.*' } |
+            Select-Object -First 1
+          if (!$v142) {
+            throw '安装后仍未找到 MSVC v142（14.29）工具集。'
+          }
+          if (!(Test-Path $sdkInclude)) {
+            throw '安装后仍未找到 Windows SDK 10.0.19041.0。'
+          }
+
+          Write-Host "Visual Studio: $vsPath"
+          Write-Host "MSVC v142: $($v142.Name)"
+          Write-Host 'Windows SDK: 10.0.19041.0'
+
+      - name: 配置 Win7 兼容构建
+        shell: pwsh
+        run: |
+          cmake -S . -B build `
+            -G "Visual Studio 17 2022" `
+            -A "x64,version=10.0.19041.0" `
+            -T v142 `
+            -DCMAKE_SYSTEM_VERSION=10.0.19041.0 `
+            -DSM_BUILD_TESTS=ON `
+            -DSM_WIN7_COMPAT=ON
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: 构建
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --parallel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: 单元测试
+        shell: pwsh
+        run: |
+          ctest --test-dir build -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: 检查产物齐全
+        shell: pwsh
+        run: |
+          $required = @(
+            'build/Release/sm_host.exe',
+            'build/Release/sm_imgui.dll',
+            'build/Release/plugins/notifier.console.dll',
+            'build/Release/plugins/notifier.imgui.dll',
+            'build/Release/plugins/source.email.dll',
+            'build/Release/plugins/source.webhook.dll'
+          )
+          $missing = $required | Where-Object { -not (Test-Path $_) }
+          if ($missing) {
+            throw ("缺少产物：{0}。请检查构建日志中的 external 依赖缺失或目标被跳过的警告。" -f ($missing -join '、'))
+          }
+
+      - name: 打包
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item build/Release/sm_host.exe, build/Release/sm_imgui.dll dist/
+          Copy-Item build/Release/plugins dist/plugins -Recurse
+          Copy-Item config dist/config -Recurse
+          Copy-Item THIRD-PARTY-NOTICES.txt dist/
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleMessage-win7-compat
+          path: dist/
+          if-no-files-found: error
+
+  release:
+    name: 发布 Release
+    needs: [build-latest, build-win7]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: 取回构建产物
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: 打成 zip
+        shell: bash
+        run: |
+          set -eu
+          mkdir -p release
+          for name in SimpleMessage-win64 SimpleMessage-win7-compat; do
+            test -d "artifacts/$name" || { echo "缺少产物目录 artifacts/$name"; exit 1; }
+            (cd "artifacts/$name" && zip -qr "$GITHUB_WORKSPACE/release/${name}-${GITHUB_REF_NAME}.zip" .)
+          done
+          ls -l release
+
+      - name: 写发布说明
+        shell: bash
+        run: |
+          cat > notes.md <<'EOF'
+          ## 下载哪个
+
+          | 包 | 适用 | CRT |
+          |---|---|---|
+          | `SimpleMessage-win64-<版本>.zip` | Windows 10 / 11 x64 | 动态（需要匹配的 VC 运行时） |
+          | `SimpleMessage-win7-compat-<版本>.zip` | 目标为 Windows 7 SP1 及以后系统的 x64 版本 | 按项目的 Win7 兼容配置使用静态 CRT；实际运行仍取决于系统补丁、API 依赖和驱动 |
+
+          Win7 版本使用 VS 2022 中的 MSVC v142（14.29）和 Windows SDK 10.0.19041.0，并开启项目的 `SM_WIN7_COMPAT` 配置。托管 CI 不是 Windows 7 系统，因此 CI 仅能验证兼容配置的构建和测试，不能替代 Windows 7 SP1 实机验证。
+
+          安装插件等同于运行一个 exe —— 宿主不提供沙箱，只应放入信任的 DLL。第三方组件与许可证见包内 `THIRD-PARTY-NOTICES.txt`。
+          EOF
+          cat notes.md
+
+      - name: 创建 Release 并附加下载包
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -eu
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md
+          gh release upload "$GITHUB_REF_NAME" release/*.zip --clobber
+          gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name'
