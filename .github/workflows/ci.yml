@@ -241,7 +241,21 @@ jobs:
         shell: bash
         run: |
           set -eu
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 ||
-            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md
-          gh release upload "$GITHUB_REF_NAME" release/*.zip --clobber
-          gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name'
+          repo="$GITHUB_REPOSITORY"
+
+          gh release view "$GITHUB_REF_NAME" \
+            --repo "$repo" >/dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" \
+              --repo "$repo" \
+              --title "$GITHUB_REF_NAME" \
+              --notes-file notes.md
+
+          gh release upload "$GITHUB_REF_NAME" \
+            release/*.zip \
+            --repo "$repo" \
+            --clobber
+
+          gh release view "$GITHUB_REF_NAME" \
+            --repo "$repo" \
+            --json assets \
+            --jq '.assets[].name'
