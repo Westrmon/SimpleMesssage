@@ -1,6 +1,7 @@
 // SimpleMessage — 渲染后端：把 imgui 的一帧真正画到窗口上
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 #include "platform/window.h"
@@ -19,6 +20,13 @@ class IRenderBackend {
   virtual bool BeginFrame(const float clear_rgba[4]) = 0;
   virtual void RenderDrawData() = 0;
   virtual bool Present() = 0;
+
+  // 图标纹理。纹理句柄是 ImTextureID（后端原生句柄转成 64 位整数），
+  // 由创建它的 UI runtime 持有，Shutdown 前必须调用 DestroyTexture 归还。
+  // MakeCurrent 让 OpenGL 后端把本窗口的上下文拨为当前；DX11 是空操作。
+  virtual void MakeCurrent() = 0;
+  virtual std::uint64_t CreateTextureRgba(const void* rgba, int width, int height) = 0;
+  virtual void DestroyTexture(std::uint64_t texture) = 0;
 
   virtual bool alive() const = 0;
   virtual const char* name() const = 0;

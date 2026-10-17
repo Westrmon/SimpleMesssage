@@ -50,12 +50,6 @@ bool UiPanel::RequestClose() {
   return true;
 }
 
-void UiPanel::OpenForViews() {
-  if (setup_.session == nullptr) return;
-  if (setup_.session->refs().views <= 0) return;
-  Open();
-}
-
 PanelPage UiPanel::page() const {
   return (state_ != nullptr) ? state_->last_page : PanelPage::Overview;
 }
@@ -80,10 +74,7 @@ std::string UiPanel::ui_state_path() const {
 void UiPanel::Draw() {
   if (setup_.session == nullptr) return;
 
-  if (!setup_.session->panel_open()) {
-    if (setup_.session->refs().views > 0) DrawStillInUseNotice();
-    return;
-  }
+  if (!setup_.session->panel_open()) return;
 
   if (!modal_active() && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
     RequestClose();
@@ -150,68 +141,7 @@ void UiPanel::DrawTabBar() {
     }
   }
 
-  DrawViewPages();
   ImGui::EndTabBar();
-}
-
-void UiPanel::DrawViewPages() {
-  if (setup_.session == nullptr) return;
-
-  const std::vector<UiSession::ViewRef> views = setup_.session->Views();
-  SyncKnownViews(views);
-
-  for (const UiSession::ViewRef& view : views) {
-    bool visible = true;
-    ImGui::PushID(view.plugin_id.c_str());
-    const std::string label =
-        (view.title.empty() ? view.plugin_id : view.title) + "###view";
-
-    const bool select_this = (select_view_ == view.plugin_id);
-    if (ImGui::BeginTabItem(label.c_str(), &visible,
-                            select_this ? ImGuiTabItemFlags_SetSelected
-                                        : ImGuiTabItemFlags_None)) {
-      select_view_.clear();
-      if (setup_.plugins != nullptr) setup_.plugins->InvokeDrawView(view.plugin_id);
-      ImGui::EndTabItem();
-    }
-    ImGui::PopID();
-
-    if (!visible) {
-      setup_.session->CloseView(view.plugin_id);
-      break;
-    }
-  }
-}
-
-void UiPanel::SyncKnownViews(const std::vector<UiSession::ViewRef>& views) {
-  for (const UiSession::ViewRef& view : views) {
-    bool known = false;
-    for (const std::string& id : known_views_) {
-      if (id == view.plugin_id) {
-        known = true;
-        break;
-      }
-    }
-    if (!known) {
-      known_views_.push_back(view.plugin_id);
-      select_view_ = view.plugin_id;
-    }
-  }
-
-  for (std::size_t i = 0; i < known_views_.size();) {
-    bool alive = false;
-    for (const UiSession::ViewRef& view : views) {
-      if (view.plugin_id == known_views_[i]) {
-        alive = true;
-        break;
-      }
-    }
-    if (alive) {
-      ++i;
-    } else {
-      known_views_.erase(known_views_.begin() + static_cast<std::ptrdiff_t>(i));
-    }
-  }
 }
 
 void UiPanel::DrawFixedPage(PanelPage target) {
@@ -223,14 +153,6 @@ void UiPanel::DrawFixedPage(PanelPage target) {
     case PanelPage::Log:           DrawLogPage(); break;
     case PanelPage::About:         DrawAboutPage(); break;
   }
-}
-
-void UiPanel::DrawStillInUseNotice() {
-  const std::string reason = setup_.session->AliveReason();
-  ImGui::TextWrapped(strings::kStillInUseFormat, reason.empty() ? "?" : reason.c_str());
-  ImGui::TextDisabled("%s", strings::kStillInUseHint);
-  ImGui::Separator();
-  if (ImGui::Button(strings::kOpenPanel)) Open();
 }
 
 void UiPanel::DrawConfirmPopups() {

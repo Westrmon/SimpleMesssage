@@ -66,6 +66,7 @@ void OwnedNotification::RebuildView() {
   view.time_unix_ms = time_unix_ms;
   view.id = id.empty() ? nullptr : id.c_str();
   view.url = url.empty() ? nullptr : url.c_str();
+  view.icon = icon.empty() ? nullptr : icon.c_str();
   view.actions = sm::Span<sm::Action>(action_views.data(), action_views.size());
   view.source_plugin = source_plugin.c_str();
   view.seq = seq;
@@ -102,6 +103,7 @@ bool NotificationPipeline::Admit(const std::string& source_plugin,
   owned.topic = CopyField(src.topic, sm::limits::kMaxTopicBytes, "topic", source_plugin);
   owned.id = CopyField(src.id, sm::limits::kMaxIdBytes, "id", source_plugin);
   owned.url = CopyField(src.url, sm::limits::kMaxUrlBytes, "url", source_plugin);
+  owned.icon = CopyField(src.icon, sm::limits::kMaxIconBytes, "icon", source_plugin);
   owned.level = src.level;
   owned.time_unix_ms = src.time_unix_ms;
 

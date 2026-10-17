@@ -38,6 +38,12 @@ constexpr int kNotifyDefaultWidth = 480;
 constexpr int kNotifyDefaultHeight = 560;
 constexpr int kNotifyMargin = 16;
 
+constexpr int kDetailDefaultWidth = 720;
+constexpr int kDetailDefaultHeight = 560;
+constexpr int kDetailMinWidth = 420;
+constexpr int kDetailMinHeight = 300;
+constexpr int kDetailCascadeOffset = 28;
+
 constexpr std::int64_t kNotifyDormantMs = 30000;
 
 void LogAttachedMonitors() {
@@ -183,6 +189,7 @@ platform::win32::TrayLabels MakeTrayLabels() {
 App::App() : plugins_(config_) {}
 
 App::~App() {
+  DestroyAllDetailSurfaces();
   delete tray_;
   delete runtime_;
   delete instance_lock_;
@@ -419,6 +426,8 @@ bool App::WireSubsystems() {
 
   plugins_.SetScheduleSink(&scheduler_);
   plugins_.SetUiSession(&session_);
+  icons_.SetDataDir(paths_.data_dir);
+  plugins_.SetIconProvider(&icons_);
   plugins_.SetActionSink(this);
   plugins_.SetEventSink(this);
 
@@ -460,6 +469,7 @@ void App::RunMessageLoop() {
 }
 
 void App::FrameStep(std::int64_t now_ms) {
+  icons_.BeginFrame(now_ms);
   plugins_.PumpMainThread();
   const std::size_t delivered = pipeline_.PumpMainThread();
   actions_.PumpMainThread();
@@ -488,7 +498,7 @@ void App::FrameStep(std::int64_t now_ms) {
     ClearNotifyDormancy();
   }
 
-  if (panel_ != nullptr && session_.refs().views > 0) panel_->OpenForViews();
+  SyncDetailSurfaces();
 
   UpdateWindowTitle();
   UpdateTrayLevel();
@@ -520,6 +530,22 @@ void App::FrameStep(std::int64_t now_ms) {
     frame_->RenderFrame(&App::DrawPanelThunk, this);
   }
 
+  for (std::size_t i = 0; i < details_.size();) {
+    DetailSurface* const surface = details_[i].get();
+    if (surface->frame == nullptr ||
+        surface->frame->RenderFrame(&App::DrawDetailThunk, surface)) {
+      ++i;
+      continue;
+    }
+
+    sm::log::Writef(sm::LogLevel::Error, "ui", "详情窗口渲染失败（插件 %s）",
+                    surface->plugin_id.c_str());
+    session_.CloseView(surface->plugin_id);
+    detail_failed_.push_back(surface->plugin_id);
+    DestroyDetailSurface(surface);
+    details_.erase(details_.begin() + static_cast<std::ptrdiff_t>(i));
+  }
+
   config_.Tick(now_ms);
   DrainConfigDiagnostics();
   internal_source_.Tick(now_ms);
@@ -539,7 +565,8 @@ void App::ClearNotifyDormancy() {
 std::int64_t App::NextWaitMs(std::int64_t now_ms) const {
   if ((session_.panel_alive() && session_.panel_runtime_alive()) ||
       (session_.notify_alive() && session_.notify_runtime_alive() &&
-       !NotifyDormant(now_ms))) {
+       !NotifyDormant(now_ms)) ||
+      !details_.empty()) {
     return 0;
   }
   if (pipeline_.queued() > 0 || actions_.queued() > 0 ||
@@ -563,6 +590,7 @@ void App::DrawNotifyContent() {
 void App::DrawNotifyThunk(void* user) {
   auto* const self = static_cast<App*>(user);
   self->session_.SetDrawingSurface(UiSession::Surface::kNotify);
+  self->icons_.SetCurrentRuntime(self->notify_runtime_);
   self->DrawNotifyContent();
 }
 
@@ -577,6 +605,7 @@ void App::DrawPanelContent() {
 void App::DrawPanelThunk(void* user) {
   auto* const self = static_cast<App*>(user);
   self->session_.SetDrawingSurface(UiSession::Surface::kPanel);
+  self->icons_.SetCurrentRuntime(self->runtime_);
   self->DrawPanelContent();
 }
 
@@ -598,6 +627,172 @@ void App::DrawNotifierSurfaces() {
     }
     plugins_.InvokeDrawUi(
         subscriber.id, sm::Span<const sm::Notification>(visible.data(), visible.size()));
+  }
+}
+
+App::DetailSurface* App::FindDetailSurface(const std::string& plugin_id) {
+  for (const std::unique_ptr<DetailSurface>& surface : details_) {
+    if (surface->plugin_id == plugin_id) return surface.get();
+  }
+  return nullptr;
+}
+
+bool App::CreateDetailSurface(const UiSession::ViewRef& view) {
+  std::unique_ptr<DetailSurface> surface(new (std::nothrow) DetailSurface());
+  if (surface == nullptr) return false;
+
+  surface->app = this;
+  surface->plugin_id = view.plugin_id;
+  surface->title = view.title;
+
+  platform::window::WindowOptions options;
+  options.title = view.title;
+  options.width = kDetailDefaultWidth;
+  options.height = kDetailDefaultHeight;
+  options.min_width = kDetailMinWidth;
+  options.min_height = kDetailMinHeight;
+  options.visible = false;
+  options.callbacks.on_close_request = &App::DetailCloseRequestThunk;
+  options.callbacks.on_content_scale = &App::DetailContentScaleThunk;
+  options.callbacks.user = surface.get();
+
+  surface->window.reset(platform::window::NewWindow());
+  if (surface->window == nullptr || !surface->window->Create(options)) {
+    surface->window.reset();
+    sm::log::Writef(sm::LogLevel::Warn, "ui", "详情窗口创建失败（插件 %s）",
+                    view.plugin_id.c_str());
+    return false;
+  }
+
+  const platform::window::WorkArea area = platform::window::PrimaryWorkArea();
+  const int offset =
+      static_cast<int>(details_.size()) * kDetailCascadeOffset;
+  const int x = area.x + (area.width - kDetailDefaultWidth) / 2 + offset;
+  const int y = area.y + (area.height - kDetailDefaultHeight) / 2 + offset;
+  surface->window->SetRect(x, y, kDetailDefaultWidth, kDetailDefaultHeight);
+
+  surface->runtime = CreateImGuiRuntime(surface->window.get(), renderer_,
+                                        WindowSizing::kUserDriven, &surface->frame);
+  if (surface->runtime == nullptr ||
+      !surface->runtime->Create(&surface->context, session_.font_size())) {
+    if (surface->runtime != nullptr) surface->runtime->Destroy();
+    delete surface->runtime;
+    surface->runtime = nullptr;
+    surface->frame = nullptr;
+    surface->context = nullptr;
+    surface->window.reset();
+    return false;
+  }
+  surface->font_size_px = session_.font_size();
+
+  surface->window->Show();
+  sm::log::Writef(sm::LogLevel::Info, "ui", "详情窗口已打开（插件 %s，标题 %s）",
+                  view.plugin_id.c_str(), view.title.c_str());
+  details_.push_back(std::move(surface));
+  return true;
+}
+
+void App::DestroyDetailSurface(DetailSurface* surface) {
+  if (surface == nullptr) return;
+  if (surface->runtime != nullptr) {
+    surface->runtime->Destroy();
+    delete surface->runtime;
+    surface->runtime = nullptr;
+    surface->frame = nullptr;
+    surface->context = nullptr;
+  }
+  surface->window.reset();
+}
+
+void App::DestroyAllDetailSurfaces() {
+  for (const std::unique_ptr<DetailSurface>& surface : details_) {
+    DestroyDetailSurface(surface.get());
+  }
+  details_.clear();
+  detail_failed_.clear();
+}
+
+void App::SyncDetailSurfaces() {
+  const std::vector<UiSession::ViewRef> views = session_.Views();
+  const auto has_view = [&views](const std::string& plugin_id) {
+    for (const UiSession::ViewRef& view : views) {
+      if (view.plugin_id == plugin_id) return true;
+    }
+    return false;
+  };
+
+  for (std::size_t i = details_.size(); i > 0; --i) {
+    if (has_view(details_[i - 1]->plugin_id)) continue;
+    DestroyDetailSurface(details_[i - 1].get());
+    details_.erase(details_.begin() + static_cast<std::ptrdiff_t>(i - 1));
+  }
+  for (std::size_t i = detail_failed_.size(); i > 0; --i) {
+    if (!has_view(detail_failed_[i - 1])) {
+      detail_failed_.erase(detail_failed_.begin() +
+                           static_cast<std::ptrdiff_t>(i - 1));
+    }
+  }
+
+  for (const UiSession::ViewRef& view : views) {
+    DetailSurface* const surface = FindDetailSurface(view.plugin_id);
+    if (surface != nullptr) {
+      if (surface->title != view.title) {
+        surface->title = view.title;
+        surface->window->SetTitle(view.title);
+      }
+      if (surface->font_size_px != session_.font_size()) {
+        surface->runtime->RebuildFonts(session_.font_size());
+        surface->font_size_px = session_.font_size();
+      }
+      continue;
+    }
+
+    bool failed = false;
+    for (const std::string& id : detail_failed_) {
+      if (id == view.plugin_id) {
+        failed = true;
+        break;
+      }
+    }
+    if (failed) continue;
+
+    if (!CreateDetailSurface(view)) detail_failed_.push_back(view.plugin_id);
+  }
+}
+
+void App::DrawDetailContent(DetailSurface* surface) {
+  if (surface == nullptr) return;
+
+  // 与通知表面同理：每帧都要把"这块内容画在哪个上下文"告诉会话，插件
+  // draw_view() 里取 imgui_context() 时才会拿到本窗口自己的那份。
+  session_.SetDrawingSurface(UiSession::Surface::kDetail);
+  session_.SetDetailContext(surface->context);
+  icons_.SetCurrentRuntime(surface->runtime);
+
+  RootWindow root(kDetailRootId);
+  if (!root.visible()) return;
+  plugins_.InvokeDrawView(surface->plugin_id);
+}
+
+void App::DrawDetailThunk(void* user) {
+  auto* const surface = static_cast<DetailSurface*>(user);
+  if (surface != nullptr && surface->app != nullptr) {
+    surface->app->DrawDetailContent(surface);
+  }
+}
+
+void App::DetailCloseRequestThunk(void* user) {
+  auto* const surface = static_cast<DetailSurface*>(user);
+  if (surface == nullptr || surface->app == nullptr) return;
+  sm::log::Writef(sm::LogLevel::Info, "ui", "详情窗口收到关闭请求（插件 %s）",
+                  surface->plugin_id.c_str());
+  surface->app->session_.CloseView(surface->plugin_id);
+}
+
+void App::DetailContentScaleThunk(void* user, float scale) {
+  auto* const surface = static_cast<DetailSurface*>(user);
+  if (surface != nullptr && surface->runtime != nullptr) {
+    surface->runtime->SetContentScale(scale);
   }
 }
 
@@ -765,6 +960,7 @@ void App::Shutdown() {
   session_.SetPanelOpen(false);
   for (const PluginInfo& info : plugins_.Snapshot()) session_.ReleasePlugin(info.id);
   session_.Tick(now);
+  DestroyAllDetailSurfaces();
   SaveUiStateNow();
   session_.SetRuntime(nullptr);
   delete runtime_;
@@ -848,11 +1044,8 @@ void App::UpdateWindowTitle() {
 }
 
 std::string App::PanelTitle() const {
-  const bool busy = !session_.panel_open() && session_.refs().views > 0;
   char buffer[128];
-  std::snprintf(buffer, sizeof(buffer),
-                busy ? strings::kWindowTitleBusyFormat : strings::kWindowTitleFormat,
-                SM_VERSION_STRING);
+  std::snprintf(buffer, sizeof(buffer), strings::kWindowTitleFormat, SM_VERSION_STRING);
   return std::string(buffer);
 }
 

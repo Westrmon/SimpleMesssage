@@ -27,7 +27,7 @@
 | # | 概念 | 载体 | 取值示例 | 谁检查 |
 |---|---|---|---|---|
 | 1 | **宿主版本** | `SM_VERSION_STRING`、`IHostContext::host_version()` | `"0.1.0"` | 人看 |
-| 2 | **API / ABI 版本** | `SM_API_VERSION`、`sm_abi_version()`、`PluginMeta::api_version` | `1` | 宿主加载时**精确匹配** |
+| 2 | **API / ABI 版本** | `SM_API_VERSION`、`sm_abi_version()`、`PluginMeta::api_version` | `2` | 宿主加载时**精确匹配** |
 | 3 | **插件自身版本** | `PluginMeta::version` | `"1.3.0"` | 宿主不解释 |
 | 4 | **兼容范围** | `PluginMeta::host_range` | `">=0.1.0,<1.0.0"` | 宿主用 §9 的规则判定 |
 
@@ -213,6 +213,7 @@ static constexpr auto kSubsSpan = sm::span_of(kSubs);
 | `kMaxTitleBytes` | 256 | `Notification::title` |
 | `kMaxContentBytes` | 64 * 1024 | `Notification::content` |
 | `kMaxUrlBytes` | 2048 | `Notification::url` |
+| `kMaxIconBytes` | 2048 | `Notification::icon` |
 | `kMaxTopicBytes` | 128 | `Notification::topic` |
 | `kSummaryCodepoints` | 20 | 自动生成的 `summary` 长度（**码点**，不是字节） |
 | `kMaxActionsPerNotification` | 4 | `Notification::actions.size` |
@@ -270,17 +271,24 @@ static constexpr auto kSubsSpan = sm::span_of(kSubs);
 #define SM_VERSION_MINOR 1
 #define SM_VERSION_PATCH 0
 #define SM_VERSION_STRING "0.1.0"
-#define SM_API_VERSION 1
+#define SM_VERSION_DETAIL "v0.1.0"   // git describe 的完整结果
+#define SM_API_VERSION 2
 
 namespace sm { inline constexpr std::int32_t kApiVersion = SM_API_VERSION; }
 ```
 
 | 符号 | 类型 | 说明 |
 |---|---|---|
-| `SM_VERSION_MAJOR/MINOR/PATCH` | 整数宏 | 宿主版本的三个分量。与 `CMakeLists.txt` 的 `project(... VERSION 0.1.0)` 必须一致，由 `cmake/SmOptions.cmake` 的 `sm_assert_version_header()` 在配置阶段强制校验 |
-| `SM_VERSION_STRING` | 字符串宏 | 用于日志与控制面板"关于"页 |
+| `SM_VERSION_MAJOR/MINOR/PATCH` | 整数宏 | 宿主版本的三个分量。构建时由 `cmake/SmVersion.cmake` 从 git tag 推导，经 `sm::sdk` 的接口编译定义注入；**不要手改** |
+| `SM_VERSION_STRING` | 字符串宏 | 严格的 `major.minor.patch`，用于日志、插件版本范围判定与控制面板"关于"页 |
+| `SM_VERSION_DETAIL` | 字符串宏 | `git describe --tags --dirty` 的完整结果（如 `v0.1.0-3-gabc1234-dirty`），只用于展示与排障，不能拿去做版本比较 |
 | `SM_API_VERSION` | 整数宏 | ABI 版本。**插件元信息里必须写这个宏**，不要写字面量 |
 | `sm::kApiVersion` | `constexpr std::int32_t` | 上面那个宏的类型安全同义写法 |
+
+**版本号只有一个来源：git tag。** 发布时给提交打 `vX.Y.Z` 标签，CMake 配置阶段用
+`git describe --tags --match "v[0-9]*"` 找到最近的标签，取数字部分作为宿主版本；
+标签之后的提交数、短哈希与 dirty 标记只进入 `SM_VERSION_DETAIL`。
+没有 git 或没有匹配标签时，才退回 `include/sm/version.h` 里的兜底宏并给出警告。
 
 **为什么 `SM_API_VERSION` 是宏**：`PluginMeta` 是 `constexpr` 静态数据，
 插件需要在 `constexpr` 上下文里使用它。
@@ -381,6 +389,7 @@ Action 时，它不会再画一个重复的按钮。
 |---|---|
 | `id` | 去重键，可空。**作用域是全局的**（跨插件也是），所以建议 `"插件id:业务id"`，如 `"source.mail:unread"`。队列中已存在同 id → **原地更新**而非新增 |
 | `url` | 关联链接，可空。宿主不校验合法性（但 Notifier 打开它时会走 `open_url()`，见 §6.3） |
+| `icon` | 图标，可空，上限 `kMaxIconBytes`。可以是 http(s) 网络图片 URL、`file://` URL、绝对路径，或相对 `data_dir()` 的路径。宿主**不校验、不阻塞投递**；Notifier 通过 `IHostContext::icon_texture()` 异步取纹理，加载失败只是不显示（见 §6.3） |
 | `actions` | 可点击项，可空。超出 `kMaxActionsPerNotification` 的部分被截断 |
 
 #### 宿主持有字段（插件必须留空）
@@ -596,27 +605,31 @@ void* imgui_context();
 void  request_ui_surface(std::int64_t duration_ms);
 void  set_view_title(const char* title);
 void  close_view();
+std::uint64_t icon_texture(const char* icon, int* out_width, int* out_height,
+                           bool* out_failed);
 bool  invoke_action(std::int64_t notification_seq, const char* action_id);
 bool  open_url(const char* url);
 ```
 
 | 方法 | 说明 |
 |---|---|
-| `imgui_context()` | **当前这一帧画在哪张表面上的**那个 imgui 上下文，实际类型是 `ImGuiContext*`；无 UI 会话时返回 `nullptr`。宿主有**两张表面**（控制面板、通知表面），各有一个上下文 —— 同一个插件的 `draw_ui()`（画在通知表面上）与 `draw_view()`（画在面板上）拿到的指针**不同**，所以每次回调都要重新取。**返回 `void*` 是刻意的** —— SDK 头不引入 imgui，以免强制非 UI 插件依赖它 |
+| `imgui_context()` | **当前这一帧画在哪张表面上的**那个 imgui 上下文，实际类型是 `ImGuiContext*`；无 UI 会话时返回 `nullptr`。宿主有**三类表面**（控制面板、通知表面、每个插件一扇的详情窗口），各有一个上下文 —— 同一个插件的 `draw_ui()`（画在通知表面上）与 `draw_view()`（画在该插件的详情窗口上）拿到的指针**不同**，所以每次回调都要重新取。**返回 `void*` 是刻意的** —— SDK 头不引入 imgui，以免强制非 UI 插件依赖它 |
 | `request_ui_surface(duration_ms)` | 请求宿主为**本插件**维持一个存活 `duration_ms` 毫秒的 UI 会话。`> 0`：从现在起至少维持这么久，重复调用刷新为"从现在起"。`<= 0`：我持续需要 UI，直到显式关闭（用于详情视图）。多次调用**取最长的那个** |
-| `set_view_title(title)` | 本插件详情视图页的标题。`nullptr`/`""` 时用"插件名" |
-| `close_view()` | 关闭本插件的详情视图并释放它持有的"持续"UI 引用。**只影响本插件** |
+| `set_view_title(title)` | 打开（或更新）本插件的详情窗口，并设置窗口标题。`nullptr`/`""` 时用"插件名" |
+| `close_view()` | 关闭本插件的详情窗口并释放它持有的"持续"UI 引用。**只影响本插件** |
+| `icon_texture(icon, &w, &h, &failed)` | 取通知图标的纹理（即 `ImTextureID`），供 `ImGui::Image()` 直接使用。`icon` 接受 `Notification::icon` 的任何形式。**加载是异步的**：首帧返回 0 并开始下载/解码，之后每帧重取；就绪后返回非 0 句柄，并通过 `out_width` / `out_height` 写入像素尺寸（最长边缩到 256 px）。失败返回 0 且 `*out_failed = true`，失败结果会被缓存、不会反复重试。空指针或空字符串返回 0。支持 PNG / JPEG / BMP / ICO（系统 WIC 解码）。**只在 `draw_ui()` / `draw_view()` 期间有意义** —— 它取的是当前表面的绘制资源，不是通知数据 |
 | `invoke_action(seq, action_id)` | 请求宿主在**本帧绘制结束后**回调本插件的 `on_action()`。返回 `false` 表示该通知已不在内存历史里，或主线程队列已满 —— 本次点击应被安静忽略 |
 | `open_url(url)` | 用系统默认程序打开链接。**只接受 http / https / mailto**，其余拒绝并记 Warn |
 
 `imgui_context()` 的三条硬规则（先判空、不自己创建/销毁上下文、不缓存 ——
 "不缓存"包括**不跨表面缓存**）见 [01-入门 §7.3](01-入门.md)。
 
-> **为什么是"这一帧所在表面"而不是"那个会话"**：界面有两张表面，
-> 各有自己的 imgui 上下文（[01-架构总览 §8.2](../01-架构总览.md)）。插件的回调
-> 本来就在某一帧、某一张表面上被调用 —— 让接口回答这件事，插件就不需要
-> 知道"宿主的界面分几张表面"，只需要在每次回调里问一次。
-> 返回"那个会话的上下文"这种说法在两张表面下不再有唯一的答案。
+> **为什么是"这一帧所在表面"而不是"那个会话"**：界面有三类表面（控制面板、
+> 通知表面、每个插件一扇的详情窗口），各有自己的 imgui 上下文
+> （[01-架构总览 §8.2](../01-架构总览.md)）。插件的回调本来就在某一帧、某一张
+> 表面上被调用 —— 让接口回答这件事，插件就不需要知道"宿主的界面分几张表面"，
+> 只需要在每次回调里问一次。返回"那个会话的上下文"这种说法在多表面下不再有
+> 唯一的答案。
 
 > **`invoke_action` 为什么需要存在（而不是让插件直接调自己的 `on_action`）**：
 > 两个理由。① `on_action` 里可能开详情视图、改设置，那是会改变本帧正在
@@ -973,8 +986,10 @@ UI 表面时（也就是它调用过 `request_ui_surface()` 且尚未到期）�
 绘制本插件的**详情视图**。在**主线程**调用，且**仅当**本插件调用了
 `set_view_title()` 且尚未 `close_view()` 时才会被调用。
 
-视图的承载形式**由宿主决定**（实现上：控制面板里的一个可关闭视图页，
-打开视图会自动打开控制面板）。插件只管画内容，**不要创建自己的顶层窗口**。
+视图的承载形式**由宿主决定**：宿主为该插件新建一扇独立窗口（有标题栏、
+可缩放），窗口里只画本插件的 `draw_view()`。打开详情**不会**打开控制面板，
+关掉控制面板也**不会**关掉详情窗口。插件只管从这块表面的左上角开始画内容，
+**不要创建自己的顶层窗口**。
 
 ### 7.7 `sm::PluginBase`
 
@@ -1230,7 +1245,7 @@ sm::make_summary("  你好\n\n世界   这是很长的内容…", sm::limits::kS
 ### 常量
 
 `SM_VERSION_MAJOR` / `SM_VERSION_MINOR` / `SM_VERSION_PATCH` /
-`SM_VERSION_STRING` / `SM_API_VERSION` / `sm::kApiVersion` (§4)
+`SM_VERSION_STRING` / `SM_VERSION_DETAIL` / `SM_API_VERSION` / `sm::kApiVersion` (§4)
 
 `sm::limits::*` (§3.3)
 

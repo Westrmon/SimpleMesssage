@@ -246,7 +246,8 @@ class IPlugin {
   // history 是宿主内存历史的只读视图（最近在前，已按本插件的订阅过滤），生存期仅限本次调用。
   virtual void draw_ui(Span<const Notification> history) = 0;
 
-  // 绘制本插件的详情视图。视图的承载形式由宿主决定。
+  // 绘制本插件的详情视图。宿主为它单开一扇窗口，每帧调用本方法；
+  // 这个窗口里只有它，不回落到控制面板。
   virtual void draw_view() = 0;
 };
 

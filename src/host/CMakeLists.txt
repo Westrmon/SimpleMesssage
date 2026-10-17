@@ -27,6 +27,7 @@ add_executable(sm_host
     action_dispatch.cpp
     internal_source.cpp
     ui_fonts.cpp
+    image_cache.cpp
     message_window.cpp
     render_probe.cpp
     render_dx11.cpp
@@ -62,6 +63,13 @@ target_sources(sm_host PRIVATE ${SM_IMGUI_BACKEND_SOURCES})
 # 看不出真正的原因是依赖被删了。
 if(SM_HAVE_GLFW)
     target_link_libraries(sm_host PRIVATE sm::glfw)
+endif()
+
+# 通知图标里的网络图片由宿主下载（sm_curl.dll 与插件共用同一份实现）。
+# 缺少 libcurl 时仍能构建，只是 http(s) 图标会被判为加载失败。
+if(SM_HAVE_CURL)
+    target_link_libraries(sm_host PRIVATE sm::curl)
+    target_compile_definitions(sm_host PRIVATE SM_HAVE_CURL=1)
 endif()
 
 # 宿主是一个 Windows 应用，因此按 Windows 的惯例定义 UNICODE/_UNICODE。
@@ -126,8 +134,11 @@ if(WIN32)
     # 一律用 LoadLibrary+GetProcAddress 动态解析（external/glfw/src/win32_init.c
     # 的 loadLibraries）—— 于是 Windows 7 上既不会因为缺少这些新 API 而启动
     # 失败，也不需要在这里补一个 shcore 导入库。
+    # windowscodecs / ole32 供通知图标的 WIC 解码：PNG/JPEG/BMP/ICO 都由系统
+    # 自带解码器处理，不额外引入 stb_image 或 libpng。
     target_link_libraries(sm_host PRIVATE
-        d3d11 d3dcompiler dxgi opengl32 shell32 user32 dwmapi comdlg32)
+        d3d11 d3dcompiler dxgi opengl32 shell32 user32 dwmapi comdlg32
+        windowscodecs ole32)
 endif()
 
 # 把插件目录约定告诉宿主（宿主也允许用 --plugin-dir 覆盖）。

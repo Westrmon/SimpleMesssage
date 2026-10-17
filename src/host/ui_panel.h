@@ -1,4 +1,4 @@
-// SimpleMessage — 控制面板：六页 + 插件动态视图页
+// SimpleMessage — 控制面板：六页（插件详情由独立的详情窗口承载）
 #pragma once
 
 #include <cstdint>
@@ -61,7 +61,6 @@ class UiPanel {
   void Open();
   void OpenAt(PanelPage page);
   bool RequestClose();
-  void OpenForViews();
   bool open() const;
 
   void Draw();
@@ -81,12 +80,9 @@ class UiPanel {
   void DrawLogPage();
   void DrawAboutPage();
   void DrawPluginDetail(const PluginInfo& info);
-  void DrawViewPages();
-  void SyncKnownViews(const std::vector<UiSession::ViewRef>& views);
 
   void DrawBanners();
   void DrawTabBar();
-  void DrawStillInUseNotice();
   void DrawConfirmPopups();
 
   void GoToPluginPage(const std::string& plugin_id);
@@ -101,8 +97,6 @@ class UiPanel {
   std::string        expanded_plugin_;
   std::string        scroll_to_plugin_;
   bool               pending_tab_select_ = false;
-  std::string        select_view_;
-  std::vector<std::string> known_views_;
   TextInputState     form_state_;
   TextInputState     notify_topic_state_;
   TextInputState     notify_text_state_;

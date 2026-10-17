@@ -11,7 +11,7 @@ SimpleMessage 是一个常驻托盘的 Windows 通知聚合器：**Source 插件
 | 1 | [插件开发/01-入门.md](插件开发/01-入门.md) | 最小可运行插件、四个导出符号、12 条加载校验、线程与内存的硬规则、禁止事项、imgui 共享约定 |
 | 2 | [插件开发/02-SDK接口参考.md](插件开发/02-SDK接口参考.md) | 逐符号参考：`types.h` / `notification.h` / `host_context.h` / `plugin.h` / `version_range.h` / `summary.h` / `export.h` |
 | 3 | [插件开发/03-配置格式.md](插件开发/03-配置格式.md) | `config.toml` 与 `plugins/<插件id>.toml` 的全部键、迁移、损坏恢复、原子写回 |
-| 4 | [插件开发/04-示例插件.md](插件开发/04-示例插件.md) | 随仓库发布的四个示例插件的设置项与设计要点 |
+| 4 | [插件开发/04-示例插件.md](插件开发/04-示例插件.md) | 随仓库发布的六个示例插件的设置项与设计要点 |
 
 ## 看架构
 
@@ -23,8 +23,9 @@ SimpleMessage 是一个常驻托盘的 Windows 通知聚合器：**Source 插件
 
 ## 三条最容易被忽略、也最容易踩的约定
 
-1. **imgui 必须是共享库**（`sm_imgui.dll`），宿主与插件共享同一份实现 ——
-   理由与部署要求见 [插件开发/01-入门.md](插件开发/01-入门.md) §7。
+1. **imgui 与 libcurl 必须是共享库**（`sm_imgui.dll` / `sm_curl.dll`），
+   宿主与插件、插件与插件共享同一份实现 —— 理由与部署要求见
+   [插件开发/01-入门.md](插件开发/01-入门.md) §7。
 2. **插件被拒绝加载时必须是可见的**：日志 + 控制面板 + 统计三处都要有，
    禁止静默跳过 —— 见 [插件开发/01-入门.md](插件开发/01-入门.md) §2.3。
 3. **日志最先初始化、最后退出**；UI 上下文按需创建、会话销毁即释放 ——
@@ -32,7 +33,7 @@ SimpleMessage 是一个常驻托盘的 Windows 通知聚合器：**Source 插件
 
 ## 实现状态
 
-宿主（`src/platform/`、`src/host/`）、SDK（`include/sm/`）、四个示例插件
+宿主（`src/platform/`、`src/host/`）、SDK（`include/sm/`）、六个示例插件
 （`plugins/`）、配置样例（`config/`）、自启动脚本（`scripts/`）与 SDK 纯函数
 单元测试（`tests/`，通过 `ctest` 运行）都已经实现。测试用的坏插件在
 `plugins/_test/` 与 `plugins/_badmeta/`（构建选项 `SM_BUILD_TEST_PLUGINS`

@@ -94,6 +94,7 @@ class PluginManager : public IPluginRunner,
 
   void SetScheduleSink(IScheduleSink* sink);
   void SetUiSession(IUiSession* session);
+  void SetIconProvider(IIconProvider* icons);
   void SetActionSink(IPluginActionSink* sink);
   void SetEventSink(IPluginEventSink* sink);
 
@@ -164,6 +165,7 @@ class PluginManager : public IPluginRunner,
   config::ConfigStore& config_;
   IScheduleSink*       scheduler_ = nullptr;
   IUiSession*          ui_ = nullptr;
+  IIconProvider*       icons_ = nullptr;
   IPluginActionSink*   actions_ = nullptr;
   IPluginEventSink*    events_ = nullptr;
 

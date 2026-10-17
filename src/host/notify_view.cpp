@@ -152,6 +152,8 @@ std::string NotificationJsonLine(const OwnedNotification& n) {
   line.push_back(',');
   AppendStringField(&line, "url", n.url);
   line.push_back(',');
+  AppendStringField(&line, "icon", n.icon);
+  line.push_back(',');
 
   AppendKey(&line, "actions");
   line.push_back('[');

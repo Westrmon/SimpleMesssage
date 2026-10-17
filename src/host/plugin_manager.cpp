@@ -269,6 +269,7 @@ void PluginManager::SetScheduleSink(IScheduleSink* sink) {
 }
 
 void PluginManager::SetUiSession(IUiSession* session) { ui_ = session; }
+void PluginManager::SetIconProvider(IIconProvider* icons) { icons_ = icons; }
 void PluginManager::SetActionSink(IPluginActionSink* sink) { actions_ = sink; }
 
 void PluginManager::SetEventSink(IPluginEventSink* sink) { events_ = sink; }
@@ -283,6 +284,7 @@ PluginHostSetup PluginManager::MakeHostSetup(const Record& record) const {
   setup.env.config = &config_;
   setup.env.scheduler = scheduler_;
   setup.env.ui = ui_;
+  setup.env.icons = icons_;
   setup.env.actions = actions_;
   setup.env.shutting_down = &shutting_down_;
   setup.post_queue = &post_queue_;
@@ -318,7 +320,12 @@ void PluginManager::Discover(const std::string& plugin_dir) {
 
   for (const util::DirEntry& entry : util::list_files(plugin_dir, nullptr)) {
     if (!EndsWithNoCase(entry.name, ".dll")) continue;
-    if (EqualsNoCase(entry.name, "sm_imgui.dll")) continue;
+    // 共享依赖不是插件。它们正常放在 exe 目录，但用户也可能顺手拷进插件目录，
+    // 别让它们以"缺少导出符号"的形式污染统计。
+    if (EqualsNoCase(entry.name, "sm_imgui.dll") ||
+        EqualsNoCase(entry.name, "sm_curl.dll")) {
+      continue;
+    }
 
     const std::string stem = entry.name.substr(0, entry.name.size() - 4);
     Record* const record = AddRecord(stem, util::path_join(plugin_dir, entry.name));

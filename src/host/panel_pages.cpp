@@ -1,4 +1,4 @@
-// SimpleMessage — 控制面板的六页与插件动态视图页
+// SimpleMessage — 控制面板的六页
 #include "host/ui_panel.h"
 
 #include <algorithm>
@@ -897,6 +897,7 @@ void UiPanel::DrawAboutPage() {
 
   ImGui::SeparatorText(strings::kSecBuild);
   LabelRow(strings::kBuildVersion, SM_VERSION_STRING);
+  LabelRow(strings::kBuildDetail, SM_VERSION_DETAIL);
   LabelRow(strings::kBuildApi, std::to_string(static_cast<int>(SM_API_VERSION)));
   LabelRow(strings::kBuildType, BuildTypeText());
   LabelRow(strings::kBuildCompiler, CompilerText());
@@ -949,6 +950,11 @@ void UiPanel::DrawAboutPage() {
         {"Dear ImGui", "1.93.0", "MIT", "https://github.com/ocornut/imgui"},
         {"toml++", "3.4.0", "MIT", "https://github.com/marzer/tomlplusplus"},
         {"GLFW", "3.5.1", "Zlib/libpng", "https://github.com/glfw/glfw"},
+#ifdef SM_HAVE_CURL
+        // 宿主只用它下载通知图标里的 http(s) 图片（见 image_cache.cpp）；
+        // 未启用 libcurl 的构建里网络图标直接判失败。
+        {"libcurl", "8.23.1", "curl", "https://curl.se/"},
+#endif
     };
     for (const ThirdParty& dependency : kDependencies) {
       ImGui::TableNextRow();

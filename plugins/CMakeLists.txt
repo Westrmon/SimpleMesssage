@@ -36,14 +36,27 @@ endfunction()
 if(SM_BUILD_SAMPLES)
     sm_add_plugin(notifier.console)
 
-    # ---- 两个源插件：它们要谈网络协议，各带一个第三方依赖 ----
-    # 这是对"只链接 sm::sdk"的有意破例；边界是依赖静态链进插件（不新增要部署的
-    # DLL），且不得把依赖的类型带过插件边界。见 docs/插件开发/04-示例插件.md。
+    # notifier.sound 用 winmm 的 PlaySound：它是 Windows 自带的系统库，
+    # 不是第三方依赖，也不会新增要部署的 DLL。
+    sm_add_plugin(notifier.sound)
+    if(WIN32)
+        target_link_libraries(notifier.sound PRIVATE winmm)
+    endif()
+
+    # ---- 两个源插件：它们要谈网络协议，各自导入一个第三方共享/仅头文件依赖 ----
+    # 这是对"只链接 sm::sdk"的有意破例；边界是不得把依赖的类型带过插件边界。
+    # libcurl 与 imgui 一样是共享库（sm_curl.dll，放在 exe 目录），插件里只留
+    # 导入表；cpp-httplib 是单头文件，仍然只编进 source.webhook。
+    # 见 docs/插件开发/04-示例插件.md。
     if(SM_HAVE_CURL)
+        # source.email 用 IMAPS，source.gotify 用 WebSocket；两者共用 sm_curl.dll。
         sm_add_plugin(source.email)
         target_link_libraries(source.email PRIVATE sm::curl)
+
+        sm_add_plugin(source.gotify)
+        target_link_libraries(source.gotify PRIVATE sm::curl)
     else()
-        message(STATUS "跳过 source.email：libcurl 不可用。")
+        message(STATUS "跳过 source.email 与 source.gotify：libcurl 不可用。")
     endif()
 
     if(SM_HAVE_HTTPLIB)

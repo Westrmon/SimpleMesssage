@@ -290,6 +290,7 @@ struct Pending {
   std::string title;
   std::string content;
   std::string topic;
+  std::string icon;
   sm::Level level = sm::Level::Info;
   std::int64_t time_ms = 0;
 };
@@ -432,7 +433,9 @@ StartResult WebhookSource::start(StartOutput* out) {
     sm::Notification& n = items[made];
     n = sm::Notification{};
 
-    const std::size_t need = p.title.size() + p.content.size() + p.topic.size() + 3;
+    const std::size_t icon_bytes = p.icon.empty() ? 0 : p.icon.size() + 1;
+    const std::size_t need =
+        p.title.size() + p.content.size() + p.topic.size() + icon_bytes + 3;
     char* buf = static_cast<char*>(host()->allocate(need));
     if (buf == nullptr) break;
     char* w = buf;
@@ -447,6 +450,10 @@ StartResult WebhookSource::start(StartOutput* out) {
     n.content = buf + p.title.size() + 1;
     put(p.topic);
     n.topic = buf + p.title.size() + p.content.size() + 2;
+    if (!p.icon.empty()) {
+      n.icon = buf + p.title.size() + p.content.size() + p.topic.size() + 3;
+      put(p.icon);
+    }
 
     n.level = p.level;
     n.time_unix_ms = p.time_ms;
@@ -657,6 +664,12 @@ void WebhookSource::HandleRequest(const httplib::Request& req, httplib::Response
   if (JsonTopLevelString(req.body, "level", &body_level)) {
     item.level = LevelFromName(body_level, &level_found);
     if (!level_found) item.level = sm::Level::Info;
+  }
+
+  std::string body_icon;
+  if (JsonTopLevelString(req.body, "icon", &body_icon)) {
+    item.icon = body_icon;
+    ClampUtf8(&item.icon, sm::limits::kMaxIconBytes);
   }
 
   if (cfg.include_headers) {

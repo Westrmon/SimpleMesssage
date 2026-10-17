@@ -89,6 +89,36 @@ class OpenGlBackend final : public IRenderBackend {
     return true;
   }
 
+  void MakeCurrent() override { MakeContextCurrent(); }
+
+  std::uint64_t CreateTextureRgba(const void* rgba, int width, int height) override {
+    if (window_ == nullptr || rgba == nullptr || width <= 0 || height <= 0) return 0;
+
+    MakeContextCurrent();
+    GLuint texture = 0;
+    glGenTextures(1, &texture);
+    if (texture == 0) return 0;
+
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    // GL_CLAMP_TO_EDGE；Windows 的 GL/gl.h 只到 1.1，未必定义这个 1.2 常量。
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, 0x812F);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, 0x812F);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA,
+                 GL_UNSIGNED_BYTE, rgba);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    return static_cast<std::uint64_t>(texture);
+  }
+
+  void DestroyTexture(std::uint64_t texture) override {
+    if (texture == 0 || window_ == nullptr) return;
+    MakeContextCurrent();
+    GLuint id = static_cast<GLuint>(texture);
+    glDeleteTextures(1, &id);
+  }
+
   bool alive() const override { return window_ != nullptr; }
 
   const char* name() const override { return "OpenGL"; }

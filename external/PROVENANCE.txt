@@ -57,14 +57,19 @@ external/tomlplusplus/toml.hpp 与 external/glfw/CMakeLists.txt，
   许可证     curl 许可证（类 MIT，见 external/curl/COPYING）
   来源 URL   https://github.com/curl/curl
   需要的文件 整棵源码树（含 CMakeLists.txt、lib/、include/、cmake/）
-  接入方式   add_subdirectory，静态库；关掉 curl.exe / 静态 curl.exe /
-             测试 / 安装四类目标。上游自带可用的 CMakeLists.txt，所以不像
-             imgui 那样自己列源文件 —— 判据是"上游有没有可用的构建脚本"。
-  使用者     仅 source.email 插件（IMAP/IMAPS 客户端）
+  接入方式   add_subdirectory，以 SHARED 编成 sm_curl.dll（导入库 sm_curl_imp.lib）；
+             关掉 curl.exe / 静态 curl.exe / 静态库 / 示例 / 测试 / 安装等目标。
+             上游自带可用的 CMakeLists.txt，所以不像 imgui 那样自己列源文件 ——
+             判据是"上游有没有可用的构建脚本"。DLL 与 sm_imgui.dll 一样放在
+             exe 目录，插件只保留导入表，不再各自静态链接一份 libcurl。
+  使用者     source.email 插件（IMAP/IMAPS 客户端）与 source.gotify 插件
+             （Gotify /stream 的 WebSocket 客户端）
   备注       TLS 后端用 Windows 自带的 Schannel，必须**显式**打开
              （CURL_USE_SCHANNEL 默认 OFF），否则编出来的 libcurl 一个 TLS
              后端都没有，imaps:// 会以"协议不支持"的形态失败。
-             协议只留 http/https/imap/imaps，其余按 CURL_DISABLE_* 裁掉。
+             协议只留 http/https/imap/imaps，另加 WebSocket 的 ws/wss
+             （CURL_DISABLE_WEBSOCKETS=OFF，source.gotify 需要），其余按
+             CURL_DISABLE_* 裁掉。
 
 依赖 5：cpp-httplib
 -------------------

@@ -15,9 +15,9 @@ SimpleMessage — 第三方依赖声明
   libcurl     8.23.1-DEV     curl         https://github.com/curl/curl
   cpp-httplib v0.61.0        MIT          https://github.com/yhirose/cpp-httplib
 
-前两项与 toml++ 编进宿主（sm_host.exe / sm_imgui.dll）；libcurl 与 cpp-httplib
-是静态链接进示例插件的（source.email / source.webhook），随包一起分发，
-因此同样需要附带许可文本。
+前两项与 toml++ 编进宿主（sm_host.exe / sm_imgui.dll）；libcurl 编成共享库
+sm_curl.dll（由 source.email / source.gotify 导入），cpp-httplib 则编进
+source.webhook 插件。它们随包一起分发，因此同样需要附带许可文本。
 
 以下为各许可全文。
 

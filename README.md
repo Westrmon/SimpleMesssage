@@ -21,6 +21,10 @@ build/Release/sm_host.exe                 # 常驻托盘
 build/Release/sm_host.exe --help          # 全部命令行参数
 ```
 
+版本号来自最近的 `vX.Y.Z` git tag（`git describe`），不写死在源码里；打新 tag 后
+需重新运行一次 cmake 配置。浅克隆或压缩包构建前请先 `git fetch --tags`，否则会退回
+`include/sm/version.h` 里的兜底版本并在 CMake 配置时给出警告。
+
 
 
 **CMake 选项**
@@ -28,7 +32,7 @@ build/Release/sm_host.exe --help          # 全部命令行参数
 | 选项 | 默认 | 说明 |
 |---|---|---|
 | `SM_BUILD_HOST` | ON | 构建宿主可执行文件 |
-| `SM_BUILD_SAMPLES` | ON | 构建四个示例插件 |
+| `SM_BUILD_SAMPLES` | ON | 构建六个示例插件 |
 | `SM_BUILD_TEST_PLUGINS` | OFF | 构建 `plugins/_test/` 与 `plugins/_badmeta/` 的 30 个坏插件到 `<build>/<配置>/plugins_test/` |
 | `SM_BUILD_TESTS` | ON | 构建 SDK 纯函数单元测试（`ctest --test-dir build -C Release`） |
 | `SM_WIN7_COMPAT` | OFF | Win7 SP1 最佳努力配置 |
@@ -44,7 +48,7 @@ build/Release/sm_host.exe --help          # 全部命令行参数
 | `include/sm/` | SDK 公共头。插件作者唯一需要的东西（**接口已冻结**） |
 | `src/platform/` | 平台层：`platform.h` / `window.h` 抽象 + Win32 实现（宿主内部，不属于 SDK） |
 | `src/host/` | 宿主实现：日志 / 配置 / 插件管理 / 调度器 / 管线 / 路由 / 内部源 / 窗口层 / UI / 外壳 |
-| `plugins/` | 四个示例插件 |
+| `plugins/` | 六个示例插件 |
 | `tests/` | SDK 纯函数单元测试 |
 | `config/` | 配置样例 |
 | `scripts/` | 开机自启的注册/撤销脚本（win / linux） |
@@ -96,11 +100,11 @@ SM_DEFINE_PLUGIN(kMeta, Example);              // 必须在全局作用域
 ---
 
 ## 第三方依赖与许可
+|依赖|版本(许可)|
+|--|--|
+| **Dear ImGui** | v1.93.0（MIT）                             |
+| **toml++**     | v3.4.0（MIT）                              |
+| **GLFW**       | v3.5.1（Zlib/libpng）                      |
+| **libcurl**    | v8.23.0（curl） |
+|**cpp-httplib**       | v0.61.0（MIT， `source.webhook`） |
 
-**Dear ImGui** v1.93.0（MIT）
-
-**toml++** v3.4.0（MIT）
-**GLFW** 3.5.1（Zlib/libpng）
-**libcurl**（curl, `source.email`）
-
-**cpp-httplib**（MIT， `source.webhook`）

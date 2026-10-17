@@ -4,9 +4,11 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "host/action_dispatch.h"
 #include "host/config.h"
+#include "host/image_cache.h"
 #include "host/internal_source.h"
 #include "host/message_window.h"
 #include "host/notification_pipeline.h"
@@ -62,6 +64,27 @@ class App final : public IPanelHost,
   void DrawPanelContent();
   static void DrawPanelThunk(void* user);
   void DrawNotifierSurfaces();
+
+  // 详情视图：每个插件一扇独立窗口，只画该插件的 draw_view()。
+  struct DetailSurface {
+    App*        app = nullptr;
+    std::string plugin_id;
+    std::string title;
+    std::unique_ptr<platform::window::IWindow> window;
+    IUiRuntime*       runtime = nullptr;
+    IUiFrameRenderer* frame = nullptr;
+    void*             context = nullptr;
+    int               font_size_px = 0;
+  };
+  void SyncDetailSurfaces();
+  bool CreateDetailSurface(const UiSession::ViewRef& view);
+  void DestroyDetailSurface(DetailSurface* surface);
+  void DestroyAllDetailSurfaces();
+  DetailSurface* FindDetailSurface(const std::string& plugin_id);
+  void DrawDetailContent(DetailSurface* surface);
+  static void DrawDetailThunk(void* user);
+  static void DetailCloseRequestThunk(void* user);
+  static void DetailContentScaleThunk(void* user, float scale);
 
   IUiRuntime* CreateNotifyRuntime();
   static IUiRuntime* NotifyRuntimeFactoryThunk(void* user);
@@ -157,6 +180,9 @@ class App final : public IPanelHost,
   bool                      notify_area_valid_ = false;
   std::int64_t notify_empty_since_ms_ = 0;
   bool         notify_dormant_logged_ = false;
+  std::vector<std::unique_ptr<DetailSurface>> details_;
+  std::vector<std::string>                    detail_failed_;
+  ImageCache        icons_;
   UiSession         session_;
   UiState           ui_state_{};
   UiStateLoad       ui_state_load_ = UiStateLoad::Missing;

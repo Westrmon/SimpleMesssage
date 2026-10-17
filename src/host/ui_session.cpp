@@ -4,6 +4,7 @@
 #include <cmath>
 #include <memory>
 #include <string>
+#include <unordered_map>
 
 #include "GLFW/glfw3.h"
 
@@ -43,6 +44,8 @@ class ImGuiRuntime final : public IUiRuntime, public IUiFrameRenderer {
     // 必须自己 SetCurrentContext：已有当前上下文时 CreateContext 会把上一个恢复
     // 为当前，于是第二张表面的上下文刚建出来就不是当前了。
     context_ = ImGui::CreateContext();
+    textures_.clear();
+    frame_serial_ = 0;
     ImGui::SetCurrentContext(context_);
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr;
@@ -85,9 +88,13 @@ class ImGuiRuntime final : public IUiRuntime, public IUiFrameRenderer {
     // 先拨上下文再拆后端；拨错会拆掉另一张表面的后端。
     ImGui::SetCurrentContext(context_);
     if (backend_ != nullptr) {
+      for (const auto& entry : textures_) {
+        backend_->DestroyTexture(entry.second.id);
+      }
       backend_->Shutdown();
       backend_.reset();
     }
+    textures_.clear();
     if (window_backend_ready_) {
       ImGui_ImplGlfw_Shutdown();
       window_backend_ready_ = false;
@@ -137,6 +144,7 @@ class ImGuiRuntime final : public IUiRuntime, public IUiFrameRenderer {
     // 每帧开头都要重设：当前上下文是线程级单例。拨错的表现是"面板开着时浮层
     // 上的按钮点不动"，关掉面板又恢复正常。
     ImGui::SetCurrentContext(context_);
+    ++frame_serial_;
 
     ImGui_ImplGlfw_NewFrame();
     backend_->NewFrame();
@@ -210,7 +218,49 @@ class ImGuiRuntime final : public IUiRuntime, public IUiFrameRenderer {
 
   const std::string& font_file() const override { return font_file_; }
 
+  std::uint64_t AcquireTexture(const char* key, const void* rgba, int width,
+                               int height) override {
+    if (context_ == nullptr || backend_ == nullptr || key == nullptr ||
+        rgba == nullptr || width <= 0 || height <= 0) {
+      return 0;
+    }
+
+    const auto it = textures_.find(key);
+    if (it != textures_.end()) {
+      it->second.last_frame = frame_serial_;
+      return it->second.id;
+    }
+
+    EvictTextures();
+    backend_->MakeCurrent();
+    const std::uint64_t id = backend_->CreateTextureRgba(rgba, width, height);
+    if (id == 0) return 0;
+    textures_.emplace(key, TextureEntry{id, frame_serial_});
+    return id;
+  }
+
  private:
+  struct TextureEntry {
+    std::uint64_t id = 0;
+    std::uint64_t last_frame = 0;
+  };
+
+  // 图标纹理按来源串缓存。上限只是防御性的：超出时只回收"至少两帧没再用过"
+  // 的那些 —— 本帧画过的纹理可能已经被记录进 ImDrawData，不能当场释放。
+  void EvictTextures() {
+    constexpr std::size_t kMaxTextures = 128;
+    if (textures_.size() < kMaxTextures) return;
+    for (auto it = textures_.begin(); it != textures_.end();) {
+      if (it->second.last_frame + 1 < frame_serial_) {
+        backend_->DestroyTexture(it->second.id);
+        it = textures_.erase(it);
+        if (textures_.size() < kMaxTextures) return;
+      } else {
+        ++it;
+      }
+    }
+  }
+
   platform::window::IWindow* window_ = nullptr;
   RendererKind               renderer_ = RendererKind::kAuto;
   WindowSizing               sizing_ = WindowSizing::kUserDriven;
@@ -221,6 +271,8 @@ class ImGuiRuntime final : public IUiRuntime, public IUiFrameRenderer {
   bool                       window_backend_ready_ = false;
   std::string                font_file_;
   int                        font_size_px_ = 16;
+  std::unordered_map<std::string, TextureEntry> textures_;
+  std::uint64_t              frame_serial_ = 0;
 };
 
 IUiRuntime* CreateImGuiRuntime(platform::window::IWindow* window,
@@ -235,15 +287,8 @@ void UiSession::SetPanelOpen(bool open) {
   panel_open_ = open;
 }
 
-UiRefs UiSession::refs() const {
-  UiRefs out;
-  out.panel = panel_open_ ? 1 : 0;
-  out.surfaces = static_cast<int>(surfaces_.size());
-  out.views = static_cast<int>(views_.size());
-  return out;
-}
-
 void* UiSession::ImGuiContext() {
+  if (drawing_surface_ == Surface::kDetail) return detail_context_;
   const SurfaceState& active =
       (drawing_surface_ == Surface::kNotify) ? notify_ : panel_;
   if (!active.runtime_alive) return nullptr;
@@ -323,6 +368,7 @@ void UiSession::SetFontSize(int px) {
 }
 
 void UiSession::SetContentScale(Surface surface, float scale) {
+  if (surface == Surface::kDetail) return;  // 详情窗口的缩放由 App 直接转发给各自的 runtime
   SurfaceState& target = (surface == Surface::kNotify) ? notify_ : panel_;
   if (target.runtime != nullptr) target.runtime->SetContentScale(scale);
 }
@@ -410,18 +456,6 @@ std::vector<UiSession::ViewRef> UiSession::Views() const {
                           view.title.empty() ? view.plugin_id : view.title});
   }
   return out;
-}
-
-std::string UiSession::AliveReason() const {
-  if (views_.empty()) return std::string();
-
-  std::string reason;
-  for (const View& view : views_) {
-    if (!reason.empty()) reason += "、";
-    reason += view.title.empty() ? view.plugin_id : view.title;
-    reason += "（详情视图）";
-  }
-  return reason;
 }
 
 }  // namespace host

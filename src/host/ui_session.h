@@ -28,6 +28,11 @@ class IUiRuntime {
   virtual void SetViewportSize(int width, int height) = 0;
   virtual bool alive() const = 0;
 
+  // 取 / 创建本会话渲染上下文里的图标纹理。key 用于复用（图标来源），
+  // 纹理由本 runtime 持有，Destroy() 时统一归还。
+  virtual std::uint64_t AcquireTexture(const char* key, const void* rgba, int width,
+                                       int height) = 0;
+
   virtual const std::string& font_file() const = 0;
 };
 
@@ -57,15 +62,6 @@ IUiRuntime* CreateImGuiRuntime(platform::window::IWindow* window,
 
 using UiRuntimeFactory = IUiRuntime* (*)(void* user);
 
-struct UiRefs {
-  int panel = 0;
-  int surfaces = 0;
-  int views = 0;
-  int panel_total() const { return panel + views; }
-  int notify_total() const { return surfaces; }
-  int total() const { return panel + surfaces + views; }
-};
-
 class UiSession final : public IUiSession {
  public:
   UiSession() = default;
@@ -81,8 +77,10 @@ class UiSession final : public IUiSession {
   }
   IUiRuntime* notify_runtime() const { return notify_.runtime; }
 
-  enum class Surface { kPanel, kNotify };
+  enum class Surface { kPanel, kNotify, kDetail };
   void SetDrawingSurface(Surface surface) { drawing_surface_ = surface; }
+  // 详情窗口由 App 按插件各自建一扇，上下文也各自一份；画哪一扇由 App 每帧告知。
+  void SetDetailContext(void* context) { detail_context_ = context; }
 
   void SetPanelOpen(bool open);
   bool panel_open() const { return panel_open_; }
@@ -109,10 +107,11 @@ class UiSession final : public IUiSession {
   int  font_size() const { return font_size_px_; }
   void SetContentScale(Surface surface, float scale);
 
-  bool panel_alive() const { return panel_open_ || !views_.empty(); }
+  // 详情视图有自己的窗口，不再借控制面板的窗口活着。
+  bool panel_alive() const { return panel_open_; }
   bool notify_alive() const { return !surfaces_.empty(); }
-  bool alive() const { return panel_alive() || notify_alive(); }
-  UiRefs              refs() const;
+  bool detail_alive() const { return !views_.empty(); }
+  bool alive() const { return panel_alive() || notify_alive() || detail_alive(); }
   bool panel_runtime_alive() const { return panel_.runtime_alive; }
   bool notify_runtime_alive() const { return notify_.runtime_alive; }
   bool panel_create_failed() const { return panel_.create_failed; }
@@ -122,8 +121,6 @@ class UiSession final : public IUiSession {
     std::string title;
   };
   std::vector<ViewRef> Views() const;
-
-  std::string AliveReason() const;
 
  private:
   struct SurfaceRef {
@@ -156,6 +153,7 @@ class UiSession final : public IUiSession {
   void*            notify_factory_user_ = nullptr;
   bool             notify_factory_attempted_ = false;
   Surface          drawing_surface_ = Surface::kPanel;
+  void*            detail_context_ = nullptr;
   bool        panel_open_ = false;
   std::vector<SurfaceRef> surfaces_;
   std::vector<View>       views_;

@@ -274,6 +274,16 @@ void PluginHost::close_view() {
   env_.ui->CloseView(plugin_id_);
 }
 
+std::uint64_t PluginHost::icon_texture(const char* icon, int* out_width,
+                                       int* out_height, bool* out_failed) {
+  if (out_width != nullptr) *out_width = 0;
+  if (out_height != nullptr) *out_height = 0;
+  if (out_failed != nullptr) *out_failed = false;
+  if (icon == nullptr || icon[0] == '\0') return 0;
+  if (env_.icons == nullptr) return 0;
+  return env_.icons->Texture(icon, out_width, out_height, out_failed);
+}
+
 bool PluginHost::invoke_action(std::int64_t notification_seq, const char* action_id) {
   if (env_.actions == nullptr) {
     WarnMissingSink("invoke_action", &warned_ui_);

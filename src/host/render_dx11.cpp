@@ -156,6 +156,57 @@ class Dx11Backend final : public IRenderBackend {
     return SUCCEEDED(hr);
   }
 
+  void MakeCurrent() override {}
+
+  std::uint64_t CreateTextureRgba(const void* rgba, int width, int height) override {
+    if (device_ == nullptr || rgba == nullptr || width <= 0 || height <= 0) return 0;
+
+    D3D11_TEXTURE2D_DESC desc{};
+    desc.Width = static_cast<UINT>(width);
+    desc.Height = static_cast<UINT>(height);
+    desc.MipLevels = 1;
+    desc.ArraySize = 1;
+    desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    desc.SampleDesc.Count = 1;
+    desc.Usage = D3D11_USAGE_IMMUTABLE;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+    D3D11_SUBRESOURCE_DATA initial{};
+    initial.pSysMem = rgba;
+    initial.SysMemPitch = static_cast<UINT>(width) * 4u;
+
+    ID3D11Texture2D* texture = nullptr;
+    HRESULT hr = device_->device()->CreateTexture2D(&desc, &initial, &texture);
+    if (FAILED(hr) || texture == nullptr) {
+      sm::log::Writef(sm::LogLevel::Warn, "ui",
+                      "创建图标纹理失败（%dx%d，hr=0x%08lX）", width, height,
+                      static_cast<unsigned long>(hr));
+      return 0;
+    }
+
+    D3D11_SHADER_RESOURCE_VIEW_DESC view_desc{};
+    view_desc.Format = desc.Format;
+    view_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+    view_desc.Texture2D.MipLevels = 1;
+
+    ID3D11ShaderResourceView* view = nullptr;
+    hr = device_->device()->CreateShaderResourceView(texture, &view_desc, &view);
+    texture->Release();
+    if (FAILED(hr) || view == nullptr) {
+      sm::log::Writef(sm::LogLevel::Warn, "ui",
+                      "创建图标纹理视图失败（%dx%d，hr=0x%08lX）", width, height,
+                      static_cast<unsigned long>(hr));
+      return 0;
+    }
+    return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(view));
+  }
+
+  void DestroyTexture(std::uint64_t texture) override {
+    if (texture == 0) return;
+    reinterpret_cast<ID3D11ShaderResourceView*>(
+        static_cast<std::uintptr_t>(texture))->Release();
+  }
+
   bool alive() const override { return device_ != nullptr && !device_lost_; }
   const char* name() const override { return "DX11"; }
 

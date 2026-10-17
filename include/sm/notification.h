@@ -55,6 +55,12 @@ struct Notification {
   // 关联的链接，可空。
   const char* url = nullptr;
 
+  // 图标，可空。可以是本地图片路径（绝对路径，或相对 data_dir 的路径）、
+  // file:// URL，或 http(s) 网络图片 URL。
+  // Notifier 通过 IHostContext::icon_texture() 异步加载它；加载失败只是不显示，
+  // 不影响通知本身。
+  const char* icon = nullptr;
+
   // 可点击项。
   Span<Action> actions{};
 

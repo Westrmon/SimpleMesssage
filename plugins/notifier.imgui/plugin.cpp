@@ -184,12 +184,28 @@ class ImGuiNotifier final : public PluginBase {
       ImGui::PushID(static_cast<int>(toast.notice.seq));
       ImGui::BeginGroup();
 
+      const IconView icon = FetchIcon(toast.notice.icon);
+      if (icon.reserve) {
+        const float icon_size = ToastIconSize();
+        ImGui::BeginGroup();
+        DrawIcon(icon.texture, icon.width, icon.height, icon_size);
+        ImGui::EndGroup();
+        ImGui::SameLine();
+      }
+
+      ImGui::BeginGroup();
+      float toast_wrap = wrap_width;
+      if (icon.reserve) {
+        toast_wrap -= ToastIconSize() + ImGui::GetStyle().ItemSpacing.x;
+        if (toast_wrap < 80.0f) toast_wrap = 80.0f;
+      }
+
       ImGui::TextColored(LevelColor(toast.notice.level), "[%s] %s",
                          LevelText(toast.notice.level), toast.notice.title.c_str());
       ImGui::SameLine();
       ImGui::TextDisabled("%s", AgoText(now, toast.notice.time_unix_ms).c_str());
 
-      ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + wrap_width);
+      ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + toast_wrap);
       ImGui::TextUnformatted(toast.notice.summary.c_str());
       ImGui::PopTextWrapPos();
 
@@ -224,7 +240,8 @@ class ImGuiNotifier final : public PluginBase {
       }
       if (button_row) ImGui::NewLine();
 
-      ImGui::EndGroup();
+      ImGui::EndGroup();  // 文本 + 按钮
+      ImGui::EndGroup();  // 图标 + 文本，整行都可右键
       if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
         host()->invoke_action(toast.notice.seq, "dismiss");
         acked.push_back(toast.notice.seq);
@@ -248,6 +265,15 @@ class ImGuiNotifier final : public PluginBase {
                         AgoText(host()->now_unix_ms(), notice.time_unix_ms).c_str());
     ImGui::Separator();
 
+    const IconView icon = FetchIcon(notice.icon);
+    if (icon.reserve) {
+      ImGui::BeginGroup();
+      DrawIcon(icon.texture, icon.width, icon.height, DetailIconSize());
+      ImGui::EndGroup();
+      ImGui::SameLine();
+      ImGui::BeginGroup();
+    }
+
     ImGui::TextUnformatted(notice.title.c_str());
     if (!notice.source.empty()) {
       ImGui::SameLine();
@@ -261,6 +287,8 @@ class ImGuiNotifier final : public PluginBase {
       ImGui::PopTextWrapPos();
     }
     ImGui::EndChild();
+
+    if (icon.reserve) ImGui::EndGroup();
 
     const bool show_actions = host()->setting_bool("show_actions", true);
     if (!notice.url.empty()) {
@@ -294,8 +322,67 @@ class ImGuiNotifier final : public PluginBase {
     std::string content;
     std::string source;
     std::string url;
+    std::string icon;
     std::vector<Button> buttons;
   };
+
+  struct IconView {
+    bool          reserve = false;  // 来源非空且没失败：占住图标的位置
+    std::uint64_t texture = 0;
+    int           width = 0;
+    int           height = 0;
+  };
+
+  static float ToastIconSize() {
+    const float size = ImGui::GetFontSize() * 2.4f;
+    return size < 32.0f ? 32.0f : (size > 56.0f ? 56.0f : size);
+  }
+
+  static float DetailIconSize() {
+    const float size = ImGui::GetFontSize() * 4.0f;
+    return size < 48.0f ? 48.0f : (size > 96.0f ? 96.0f : size);
+  }
+
+  IconView FetchIcon(const std::string& source) {
+    IconView icon;
+    if (source.empty()) return icon;
+
+    bool failed = false;
+    icon.texture =
+        host()->icon_texture(source.c_str(), &icon.width, &icon.height, &failed);
+    icon.reserve = !failed;
+    return icon;
+  }
+
+  static void DrawIcon(std::uint64_t texture, int width, int height, float size) {
+    if (texture != 0 && width > 0 && height > 0) {
+      // 非正方形图片按中心裁切，图标框保持正方形，布局不受图片比例影响。
+      float u0 = 0.0f;
+      float v0 = 0.0f;
+      float u1 = 1.0f;
+      float v1 = 1.0f;
+      if (width > height) {
+        const float keep = static_cast<float>(height) / static_cast<float>(width);
+        u0 = (1.0f - keep) * 0.5f;
+        u1 = 1.0f - u0;
+      } else if (height > width) {
+        const float keep = static_cast<float>(width) / static_cast<float>(height);
+        v0 = (1.0f - keep) * 0.5f;
+        v1 = 1.0f - v0;
+      }
+      ImGui::Image(static_cast<ImTextureID>(texture), ImVec2(size, size),
+                   ImVec2(u0, v0), ImVec2(u1, v1));
+      return;
+    }
+
+    // 还在下载/解码：先占住同样大小的位置，图标就绪时整行不会跳动。
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(size, size));
+    ImDrawList* const draw = ImGui::GetWindowDrawList();
+    const ImVec2 end(pos.x + size, pos.y + size);
+    draw->AddRectFilled(pos, end, ImGui::GetColorU32(ImGuiCol_FrameBg, 0.55f), 4.0f);
+    draw->AddRect(pos, end, ImGui::GetColorU32(ImGuiCol_Border, 0.8f), 4.0f);
+  }
 
   struct Toast {
     NoticeCopy notice;
@@ -322,6 +409,7 @@ class ImGuiNotifier final : public PluginBase {
     copy.content = CopyOrEmpty(n.content);
     copy.source = CopyOrEmpty(n.source_plugin);
     copy.url = CopyOrEmpty(n.url);
+    copy.icon = CopyOrEmpty(n.icon);
     copy.buttons.reserve(n.actions.length());
     for (const sm::Action& action : n.actions) {
       Button button;

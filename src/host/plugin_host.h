@@ -118,6 +118,16 @@ class IUiSession {
   virtual void CloseView(const std::string& plugin_id) = 0;
 };
 
+// 通知图标：把 Notification::icon 变成当前渲染后端可用的纹理。
+// 实现位于 ImageCache，负责异步下载/解码与缓存。
+class IIconProvider {
+ public:
+  virtual ~IIconProvider() = default;
+
+  virtual std::uint64_t Texture(const char* source, int* out_width, int* out_height,
+                                bool* out_failed) = 0;
+};
+
 class IPluginActionSink {
  public:
   virtual ~IPluginActionSink() = default;
@@ -161,6 +171,7 @@ struct HostEnvironment {
   config::ConfigStore* config = nullptr;
   IScheduleSink*       scheduler = nullptr;
   IUiSession*          ui = nullptr;
+  IIconProvider*       icons = nullptr;
   IPluginActionSink*   actions = nullptr;
   const std::atomic<bool>* shutting_down = nullptr;
 };
@@ -216,6 +227,8 @@ class PluginHost final : public sm::IHostContext {
   void  request_ui_surface(std::int64_t duration_ms) override;
   void  set_view_title(const char* title) override;
   void  close_view() override;
+  std::uint64_t icon_texture(const char* icon, int* out_width, int* out_height,
+                             bool* out_failed) override;
   bool  invoke_action(std::int64_t notification_seq, const char* action_id) override;
   bool  open_url(const char* url) override;
 

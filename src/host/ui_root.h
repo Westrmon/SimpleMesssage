@@ -7,6 +7,7 @@ namespace sm {
 namespace host {
 
 inline constexpr const char* kPanelRootId = "##panel_root";
+inline constexpr const char* kDetailRootId = "##detail_root";
 
 class RootWindow {
  public:

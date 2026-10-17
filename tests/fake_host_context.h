@@ -51,6 +51,13 @@ class FakeHostContext : public sm::IHostContext {
   void request_ui_surface(std::int64_t) override {}
   void set_view_title(const char*) override {}
   void close_view() override {}
+  std::uint64_t icon_texture(const char*, int* out_width, int* out_height,
+                             bool* out_failed) override {
+    if (out_width != nullptr) *out_width = 0;
+    if (out_height != nullptr) *out_height = 0;
+    if (out_failed != nullptr) *out_failed = false;
+    return 0;
+  }
 
   bool invoke_action(std::int64_t, const char*) override { return false; }
   bool open_url(const char*) override { return false; }

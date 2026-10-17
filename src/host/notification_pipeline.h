@@ -38,6 +38,7 @@ struct OwnedNotification {
   std::string              topic;
   std::string              id;
   std::string              url;
+  std::string              icon;
   std::string              source_plugin;
   std::vector<OwnedAction> actions;
   sm::Level                level = sm::Level::Info;

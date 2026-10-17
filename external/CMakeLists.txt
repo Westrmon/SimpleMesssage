@@ -111,14 +111,17 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
-# libcurl（source.email 的 IMAP/IMAPS 客户端）
+# libcurl（source.email 的 IMAP/IMAPS 客户端、source.gotify 的 WebSocket 客户端）
 # ---------------------------------------------------------------------------
 set(_sm_have_curl FALSE)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/curl/CMakeLists.txt")
     set(BUILD_CURL_EXE    OFF)
     set(BUILD_STATIC_CURL OFF)
-    set(BUILD_SHARED_LIBS OFF)
-    set(BUILD_STATIC_LIBS ON)
+    # 与 sm_imgui 一样编成共享库：libcurl 的实现与全局状态在进程内只有一份，
+    # 使用它的插件只留导入表，不再各自背一份静态 libcurl。
+    set(BUILD_SHARED_LIBS ON)
+    set(BUILD_STATIC_LIBS OFF)
+    set(BUILD_EXAMPLES    OFF)
     set(BUILD_TESTING     OFF)
     set(CURL_DISABLE_INSTALL ON)
     set(CURL_USE_LIBPSL   OFF)
@@ -130,8 +133,9 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/curl/CMakeLists.txt")
     set(CURL_USE_SCHANNEL ON)
     set(CURL_WINDOWS_SSPI ON)
 
-    # curl 默认用动态 CRT 编静态库；Win7 模式下 source.email 是 /MT，
-    # 混着链会得到一堆 LNK2001/LNK2019 的 __imp_fread / __imp_fwrite。
+    # Win7 兼容模式要求全链路静态 CRT。curl 现在编的是 DLL，但 DLL 内部
+    # 同样必须与宿主 / 插件用同一套 CRT：source.email / source.gotify 是 /MT，
+    # 混着 /MD 会得到一堆 LNK2001/LNK2019 的 __imp_fread / __imp_fwrite。
     # （curl 的 option() 会尊重这里的普通变量，见 CMP0077。）
     if(SM_WIN7_COMPAT)
         set(CURL_STATIC_CRT ON)
@@ -149,16 +153,23 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/curl/CMakeLists.txt")
     set(CURL_DISABLE_SMTP       ON)
     set(CURL_DISABLE_TELNET     ON)
     set(CURL_DISABLE_TFTP       ON)
-    set(CURL_DISABLE_WEBSOCKETS ON)
+    # source.gotify 用 libcurl 的 WebSocket 客户端（ws_ / wss://）连 Gotify 的
+    # /stream。这里必须保持开启；关掉之后 source.gotify 会编译失败（找不到
+    # curl_ws_recv / CURLWS_*）。Schannel 负责 wss 的 TLS，不额外引入依赖。
+    set(CURL_DISABLE_WEBSOCKETS OFF)
 
     add_subdirectory(curl)
-    add_library(sm::curl ALIAS libcurl_static)
-    target_compile_features(libcurl_static INTERFACE cxx_std_17)
+    add_library(sm::curl ALIAS libcurl_shared)
+    # 文件名带 sm_ 前缀，理由与 sm_imgui 相同：这个 DLL 名会出现在每个使用者
+    # 的导入表里，而 libcurl.dll 是个常见的库名，用户机器 / PATH / 插件目录里
+    # 完全可能躺着另一个同名但无关的 DLL。
+    set_target_properties(libcurl_shared PROPERTIES OUTPUT_NAME "sm_curl")
+    target_compile_features(libcurl_shared INTERFACE cxx_std_17)
 
     set(_sm_have_curl TRUE)
 else()
     message(WARNING
-        "找不到 external/curl/CMakeLists.txt —— source.email 插件将被跳过。"
+        "找不到 external/curl/CMakeLists.txt —— source.email 与 source.gotify 插件将被跳过。"
         "这是随仓库提交的普通文件树，缺失说明有人删过它；"
         "重新获取的方式见 external/PROVENANCE.txt。")
 endif()

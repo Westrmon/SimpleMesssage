@@ -1,7 +1,12 @@
 cmake_minimum_required(VERSION 3.20)
 
+# 版本来自 git tag（见 cmake/SmVersion.cmake），必须在 project() 之前确定。
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+include(SmVersion)
+sm_detect_version("${CMAKE_CURRENT_SOURCE_DIR}")
+
 project(SimpleMessage
-        VERSION 0.1.0
+        VERSION ${SM_VERSION}
         DESCRIPTION "基于插件机制的通知聚合与投递工具"
         LANGUAGES CXX)
 
@@ -18,11 +23,8 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>")
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>")
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/lib")
 
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(SmOptions)
 include(SmPlatform)
-
-sm_assert_version_header()
 
 # ---------------------------------------------------------------------------
 # sm_sdk —— SDK 公共头（纯头文件，零依赖）
@@ -33,6 +35,13 @@ target_include_directories(sm_sdk INTERFACE
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
     "$<INSTALL_INTERFACE:include>")
 target_compile_features(sm_sdk INTERFACE cxx_std_17)
+# version.h 里的宏只是独立编译时的兜底值；正常构建由这里覆盖成 tag 推导值。
+target_compile_definitions(sm_sdk INTERFACE
+    SM_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
+    SM_VERSION_MINOR=${PROJECT_VERSION_MINOR}
+    SM_VERSION_PATCH=${PROJECT_VERSION_PATCH}
+    SM_VERSION_STRING="${SM_VERSION}"
+    SM_VERSION_DETAIL="${SM_VERSION_DETAIL}")
 
 # ---------------------------------------------------------------------------
 # 第三方依赖（imgui / toml++ / GLFW）

@@ -54,6 +54,7 @@ inline constexpr std::size_t kMaxIdBytes = 64;
 inline constexpr std::size_t kMaxTitleBytes = 256;
 inline constexpr std::size_t kMaxContentBytes = 64 * 1024;
 inline constexpr std::size_t kMaxUrlBytes = 2048;
+inline constexpr std::size_t kMaxIconBytes = 2048;
 inline constexpr std::size_t kMaxTopicBytes = 128;
 inline constexpr int kSummaryCodepoints = 20;
 inline constexpr std::size_t kMaxActionsPerNotification = 4;

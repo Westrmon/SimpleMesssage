@@ -50,9 +50,12 @@ jobs:
           $required = @(
             'build/Release/sm_host.exe',
             'build/Release/sm_imgui.dll',
+            'build/Release/sm_curl.dll',
             'build/Release/plugins/notifier.console.dll',
             'build/Release/plugins/notifier.imgui.dll',
+            'build/Release/plugins/notifier.sound.dll',
             'build/Release/plugins/source.email.dll',
+            'build/Release/plugins/source.gotify.dll',
             'build/Release/plugins/source.webhook.dll'
           )
           $missing = $required | Where-Object { -not (Test-Path $_) }
@@ -64,7 +67,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item build/Release/sm_host.exe, build/Release/sm_imgui.dll dist/
+          Copy-Item build/Release/sm_host.exe, build/Release/sm_imgui.dll, build/Release/sm_curl.dll dist/
           Copy-Item build/Release/plugins dist/plugins -Recurse
           Copy-Item THIRD-PARTY-NOTICES.txt dist/
 
@@ -168,9 +171,12 @@ jobs:
           $required = @(
             'build/Release/sm_host.exe',
             'build/Release/sm_imgui.dll',
+            'build/Release/sm_curl.dll',
             'build/Release/plugins/notifier.console.dll',
             'build/Release/plugins/notifier.imgui.dll',
+            'build/Release/plugins/notifier.sound.dll',
             'build/Release/plugins/source.email.dll',
+            'build/Release/plugins/source.gotify.dll',
             'build/Release/plugins/source.webhook.dll'
           )
           $missing = $required | Where-Object { -not (Test-Path $_) }
@@ -182,7 +188,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item build/Release/sm_host.exe, build/Release/sm_imgui.dll dist/
+          Copy-Item build/Release/sm_host.exe, build/Release/sm_imgui.dll, build/Release/sm_curl.dll dist/
           Copy-Item build/Release/plugins dist/plugins -Recurse
           Copy-Item THIRD-PARTY-NOTICES.txt dist/
 

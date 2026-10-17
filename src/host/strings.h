@@ -17,7 +17,6 @@ inline constexpr const char* kSettingsReset = "已恢复这个插件的默认设
 inline constexpr const char* kLabelValueFormat = "%s：%s";
 
 inline constexpr const char* kWindowTitleFormat = "SimpleMessage %s";
-inline constexpr const char* kWindowTitleBusyFormat = "SimpleMessage %s（有插件正在使用界面）";
 inline constexpr const char* kNotifyWindowTitle = "SimpleMessage 通知";
 
 inline constexpr const char* kPageOverview = "概览";
@@ -26,10 +25,6 @@ inline constexpr const char* kPageNotifications = "通知";
 inline constexpr const char* kPageRouting = "路由";
 inline constexpr const char* kPageLog = "日志";
 inline constexpr const char* kPageAbout = "关于";
-
-inline constexpr const char* kStillInUseFormat = "还有插件正在使用界面：%s";
-inline constexpr const char* kStillInUseHint = "这些详情视图关闭后，窗口会自动关掉。";
-inline constexpr const char* kOpenPanel = "打开面板";
 
 inline constexpr const char* kSafeModeBanner = "安全模式：未加载任何插件，也不会写回配置。";
 inline constexpr const char* kSafeModeHint = "以 --safe-mode 启动。确认配置修好后重新启动即可恢复正常。";
@@ -230,6 +225,7 @@ inline constexpr const char* kExitButton = "退出 SimpleMessage";
 inline constexpr const char* kExitHint = "走完整的关停顺序：停调度、停插件、卸载、写日志、退出。";
 
 inline constexpr const char* kBuildVersion = "版本";
+inline constexpr const char* kBuildDetail = "内部版本";
 inline constexpr const char* kBuildApi = "API 版本";
 inline constexpr const char* kBuildType = "构建类型";
 inline constexpr const char* kBuildCompiler = "编译器";

@@ -120,11 +120,21 @@ class IHostContext {
   // 请求宿主为本插件维持一个存活 duration_ms 毫秒的 UI 会话。
   virtual void request_ui_surface(std::int64_t duration_ms) = 0;
 
-  // 当本插件有详情视图时，设置面板中该视图页的标题（UTF-8）。
+  // 打开（或更新）本插件的详情窗口，并设置窗口标题（UTF-8）。
+  // 宿主为每个插件单独建一扇窗口，里面只画 draw_view()。
   virtual void set_view_title(const char* title) = 0;
 
-  // 关闭本插件的详情视图并释放它持有的"持续"UI 引用。
+  // 关闭本插件的详情窗口并释放它持有的"持续"UI 引用。
   virtual void close_view() = 0;
+
+  // 取通知图标的纹理（ImTextureID），供 ImGui::Image() 直接使用。
+  // icon 为 Notification::icon：本地图片路径、file:// URL 或 http(s) URL。
+  // 加载是异步的 —— 第一帧返回 0 并开始下载/解码，下一帧再取；
+  // 就绪后返回非 0 的纹理句柄，并通过 out_width / out_height 写入像素尺寸。
+  // 加载失败时返回 0 并把 *out_failed 置为 true（结果被缓存，不会反复重试）。
+  // 只能在 draw_ui / draw_view 期间调用；空指针或空字符串返回 0。
+  virtual std::uint64_t icon_texture(const char* icon, int* out_width,
+                                     int* out_height, bool* out_failed) = 0;
 
   // 请求宿主在本帧绘制结束之后回调本插件的 on_action()。
   // 用于"插件自己画的界面里点击了 Action"的场景。
