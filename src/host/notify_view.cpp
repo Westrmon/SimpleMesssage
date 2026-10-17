@@ -9,6 +9,7 @@
 #include "host/log.h"
 #include "host/strings.h"
 #include "host/util.h"
+#include "platform/fs.h"
 
 namespace sm {
 namespace host {
@@ -177,12 +178,7 @@ bool WriteNotificationsJsonl(const std::string& utf8_path,
     return false;
   }
 
-  std::FILE* file = nullptr;
-#if defined(_WIN32)
-  if (::_wfopen_s(&file, util::widen(utf8_path.c_str()).c_str(), L"wb") != 0) file = nullptr;
-#else
-  file = std::fopen(utf8_path.c_str(), "wb");
-#endif
+  std::FILE* file = platform::fs::open_file(utf8_path.c_str(), "wb");
   if (file == nullptr) {
     if (out_error != nullptr) *out_error = "无法创建文件 " + utf8_path;
     return false;

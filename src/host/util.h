@@ -6,18 +6,15 @@
 #include <string>
 #include <vector>
 
+#include "platform/fs.h"
+
 namespace sm {
 namespace util {
-
-std::string  narrow(const wchar_t* utf16_or_32);
-std::wstring widen(const char* utf8);
 
 std::string path_join(const std::string& dir, const std::string& name);
 std::string path_dir(const std::string& path);
 std::string path_filename(const std::string& path);
 bool        path_is_absolute(const std::string& path);
-
-std::string exe_directory();
 
 bool ensure_directory(const std::string& utf8_dir);
 bool is_directory_writable(const std::string& utf8_dir);
@@ -31,10 +28,7 @@ bool read_text_file(const std::string& utf8_path, std::string* out_text,
 bool write_text_file_atomically(const std::string& utf8_path, const std::string& text,
                                 std::string* out_error = nullptr);
 
-struct DirEntry {
-  std::string   name;
-  std::uint64_t size;
-};
+using DirEntry = platform::fs::DirEntry;
 
 std::vector<DirEntry> list_files(const std::string& utf8_dir, const char* name_suffix);
 

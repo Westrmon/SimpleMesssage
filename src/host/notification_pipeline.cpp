@@ -14,8 +14,6 @@ namespace sm {
 namespace host {
 namespace {
 
-constexpr std::size_t kSummaryBufferBytes = 128;
-
 bool IsContinuationByte(char c) {
   return (static_cast<unsigned char>(c) & 0xC0u) == 0x80u;
 }
@@ -44,6 +42,13 @@ std::string NormalizeSummary(const std::string& text) {
   std::vector<char> buffer(text.size() + 4);
   sm::make_summary(text.c_str(), text.size(), buffer.data(), buffer.size());
   return std::string(buffer.data());
+}
+
+void LogRuleWarnings(const char* source, const RuleDiagnostics& warnings) {
+  for (const RuleDiagnostic& warning : warnings) {
+    if (warning.severity != RuleDiagnostic::Severity::Warn) continue;
+    log::Writef(sm::LogLevel::Warn, source, "规则：%s", warning.message.c_str());
+  }
 }
 
 }  // namespace
@@ -82,6 +87,16 @@ void NotificationPipeline::SetRouter(const Router* router) { router_ = router; }
 
 void NotificationPipeline::SetDelivery(INotifierDelivery* delivery) {
   delivery_ = delivery;
+}
+
+void NotificationPipeline::SetRules(std::shared_ptr<RuleSet> rules) {
+  std::lock_guard<std::mutex> lock(rules_mutex_);
+  rules_ = std::move(rules);
+}
+
+std::shared_ptr<RuleSet> NotificationPipeline::RulesSnapshot() const {
+  std::lock_guard<std::mutex> lock(rules_mutex_);
+  return rules_;
 }
 
 void NotificationPipeline::OnNotifications(
@@ -127,6 +142,56 @@ bool NotificationPipeline::Admit(const std::string& source_plugin,
     }
   }
 
+  // 来源提供的简介先折叠空白；没有提供就留空，交给来源趟的 auto_summary 规则。
+  if (src.summary != nullptr && src.summary[0] != '\0') {
+    owned.summary = NormalizeSummary(
+        CopyField(src.summary, sm::limits::kMaxContentBytes, "summary", source_plugin));
+  }
+
+  owned.source_plugin = source_plugin;
+
+  // ---- 来源趟规则：全局改写/过滤，结果会进入历史 ----
+  const std::shared_ptr<RuleSet> rules = RulesSnapshot();
+  if (rules != nullptr && !rules->empty()) {
+    RuleFields fields(owned.title, owned.content, owned.summary, owned.topic,
+                      owned.level);
+    RuleDiagnostics warnings;
+    if (!rules->ApplySource(&fields, source_plugin, &warnings)) {
+      LogRuleWarnings(source_plugin.c_str(), warnings);
+      std::lock_guard<std::mutex> lock(mutex_);
+      ++stats_.filtered_source;
+      return false;
+    }
+    LogRuleWarnings(source_plugin.c_str(), warnings);
+
+    if (fields.has_title()) {
+      owned.title.assign(fields.title_buffer());
+      if (TruncateUtf8(&owned.title, sm::limits::kMaxTitleBytes)) {
+        log::Writef(sm::LogLevel::Warn, source_plugin.c_str(),
+                    "规则改写后的 title 超过 %zu 字节，已截断",
+                    sm::limits::kMaxTitleBytes);
+      }
+    }
+    if (fields.has_content()) {
+      owned.content.assign(fields.content_buffer());
+      if (TruncateUtf8(&owned.content, sm::limits::kMaxContentBytes)) {
+        log::Writef(sm::LogLevel::Warn, source_plugin.c_str(),
+                    "规则改写后的 content 超过 %zu 字节，已截断",
+                    sm::limits::kMaxContentBytes);
+      }
+    }
+    if (fields.has_summary()) {
+      owned.summary.assign(fields.summary_buffer());
+      if (TruncateUtf8(&owned.summary, sm::limits::kMaxContentBytes)) {
+        log::Writef(sm::LogLevel::Warn, source_plugin.c_str(),
+                    "规则改写后的 summary 超过 %zu 字节，已截断",
+                    sm::limits::kMaxContentBytes);
+      }
+      owned.summary = NormalizeSummary(owned.summary);
+    }
+    if (fields.has_level()) owned.level = fields.level();
+  }
+
   if (owned.title.empty() || owned.content.empty() || owned.topic.empty()) {
     const char* missing = !owned.title.empty()
                               ? (!owned.content.empty() ? "topic" : "content")
@@ -138,24 +203,12 @@ bool NotificationPipeline::Admit(const std::string& source_plugin,
     return false;
   }
 
-  if (src.summary != nullptr && src.summary[0] != '\0') {
-    owned.summary = NormalizeSummary(
-        CopyField(src.summary, sm::limits::kMaxContentBytes, "summary", source_plugin));
-  } else {
-    char buffer[kSummaryBufferBytes];
-    sm::make_summary(owned.content.c_str(), sm::limits::kSummaryCodepoints, buffer,
-                     sizeof(buffer));
-    owned.summary = buffer;
-  }
-
-  owned.source_plugin = source_plugin;
-
   std::lock_guard<std::mutex> lock(mutex_);
 
   if (!owned.id.empty()) {
-    // 同 id 的通知是原地更新，必须保住原来的 seq 与已读状态 —— 换一条新的会让
-    // 浮层以为来了新通知、让已读记录凭空回滚。
-    const auto it = by_id_.find(owned.id);
+    // 同一来源实例的同 id 通知是原地更新，必须保住原来的 seq 与已读状态 ——
+    // 换一条新的会让浮层以为来了新通知、让已读记录凭空回滚。
+    const auto it = by_id_.find({owned.source_plugin, owned.id});
     if (it != by_id_.end()) {
       OwnedNotification& existing = *it->second;
       const std::int64_t keep_seq = existing.seq;
@@ -177,14 +230,14 @@ bool NotificationPipeline::Admit(const std::string& source_plugin,
   queue_.push_back(std::move(owned));
   OwnedNotification& stored = queue_.back();
   stored.RebuildView();
-  if (!stored.id.empty()) by_id_[stored.id] = &stored;
+  if (!stored.id.empty()) by_id_[{stored.source_plugin, stored.id}] = &stored;
   ++stats_.produced;
   return true;
 }
 
 void NotificationPipeline::DropOldestLocked() {
   OwnedNotification& oldest = queue_.front();
-  if (!oldest.id.empty()) by_id_.erase(oldest.id);
+  if (!oldest.id.empty()) by_id_.erase({oldest.source_plugin, oldest.id});
   queue_.pop_front();
   ++stats_.dropped;
   ++dropped_since_report_;
@@ -209,6 +262,9 @@ std::size_t NotificationPipeline::PumpMainThread(std::size_t max_items) {
       (max_items == 0) ? limits_.per_frame_budget : max_items;
   const Router* const router = router_;
   INotifierDelivery* const delivery = delivery_;
+  const std::shared_ptr<RuleSet> rules = RulesSnapshot();
+  const bool has_delivery_rules =
+      rules != nullptr && rules->has_delivery_rules();
 
   std::vector<std::string> matched;
   std::size_t consumed = 0;
@@ -218,7 +274,7 @@ std::size_t NotificationPipeline::PumpMainThread(std::size_t max_items) {
       std::lock_guard<std::mutex> lock(mutex_);
       if (queue_.empty()) break;
       OwnedNotification& front = queue_.front();
-      if (!front.id.empty()) by_id_.erase(front.id);
+      if (!front.id.empty()) by_id_.erase({front.source_plugin, front.id});
       TrimHistoryLocked();
       history_.push_back(std::move(front));
       queue_.pop_front();
@@ -232,25 +288,61 @@ std::size_t NotificationPipeline::PumpMainThread(std::size_t max_items) {
     if (router != nullptr) router->Match(n.topic, &matched);
 
     bool delivered = false;
+    int filtered = 0;
     if (delivery != nullptr) {
       for (const std::string& id : matched) {
+        // ---- 投递趟规则：只影响本次 Deliver 的视图，历史保持原样 ----
+        if (has_delivery_rules) {
+          RuleFields fields(n.title, n.content, n.summary, n.topic, n.level);
+          RuleDiagnostics warnings;
+          const bool keep =
+              rules->ApplyDelivery(&fields, n.source_plugin, id, &warnings);
+          LogRuleWarnings("host", warnings);
+          if (!keep) {
+            ++filtered;
+            continue;
+          }
+          if (fields.changed()) {
+            std::string title(fields.title());
+            std::string content(fields.content());
+            std::string summary(fields.summary());
+            sm::Notification view = n.view;
+            view.title = title.c_str();
+            view.content = content.c_str();
+            view.summary = summary.c_str();
+            view.level = fields.level();
+            if (delivery->Deliver(id, view)) delivered = true;
+            continue;
+          }
+        }
         if (delivery->Deliver(id, n.view)) delivered = true;
       }
     }
 
+    if (filtered != 0) {
+      std::lock_guard<std::mutex> lock(mutex_);
+      stats_.filtered_delivery += filtered;
+    }
+
     if (!delivered) {
-      {
-        std::lock_guard<std::mutex> lock(mutex_);
-        ++stats_.undelivered;
-      }
-      if (matched.empty()) {
+      if (filtered != 0) {
         log::Writef(sm::LogLevel::Debug, "host",
-                    "通知 #%lld（topic=%s）没有 Notifier 接收，仅进历史",
-                    static_cast<long long>(n.seq), n.topic.c_str());
-      } else if (delivery == nullptr && !warned_no_delivery_) {
-        warned_no_delivery_ = true;
-        log::Write(sm::LogLevel::Warn, "host",
-                   "通知投递接口未接线：路由命中的通知不会被任何 Notifier 收到");
+                    "通知 #%lld 被投递规则拦截（%d 个 Notifier），仍保留在历史",
+                    static_cast<long long>(n.seq), filtered);
+      } else {
+        {
+          std::lock_guard<std::mutex> lock(mutex_);
+          ++stats_.undelivered;
+        }
+        if (matched.empty()) {
+          log::Writef(sm::LogLevel::Debug, "host",
+                      "通知 #%lld（topic=%s）没有 Notifier 接收，仅进历史",
+                      static_cast<long long>(n.seq), n.topic.c_str());
+        } else if (delivery == nullptr && !warned_no_delivery_) {
+          warned_no_delivery_ = true;
+          log::Write(sm::LogLevel::Warn, "host",
+                     "通知投递接口未接线：路由命中的通知不会被任何 Notifier 收到");
+        }
       }
     }
   }

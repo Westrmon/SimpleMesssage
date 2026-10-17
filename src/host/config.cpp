@@ -15,8 +15,11 @@
 
 #include <toml.hpp>
 
+#include "host/instances.h"
+#include "host/plugin_id.h"
 #include "host/util.h"
 #include "platform/platform.h"
+#include "platform/system.h"
 
 #ifndef SM_DEFAULT_PLUGIN_DIR
 #define SM_DEFAULT_PLUGIN_DIR "plugins"
@@ -46,11 +49,7 @@ bool ParseToml(const std::string& text, const std::string& source_path, toml::ta
 std::string CorruptStamp() {
   const std::time_t now = std::time(nullptr);
   std::tm parts{};
-#if defined(_WIN32)
-  localtime_s(&parts, &now);
-#else
-  localtime_r(&now, &parts);
-#endif
+  platform::local_time(now, &parts);
   char text[32];
   std::strftime(text, sizeof(text), "%Y%m%d-%H%M%S", &parts);
   return text;
@@ -224,9 +223,20 @@ void ReadEnum(const toml::node& node, const sm::SettingDef& def, Reader& r,
 
 using MigrateFn = bool (*)(toml::table& table, Reader& r);
 
+// v1 的 [plugins] 是“id -> 启用”表；v2 改成 [[instances]]。迁移只做结构转换，
+// 不在这里判断某个 id 是否对应已安装的插件 —— 那需要插件发现阶段的信息。
+bool MigrateV1ToV2(toml::table& table, Reader& r) {
+  std::vector<std::string> warnings;
+  const bool ok = MigratePluginsV1(&table, &warnings);
+  for (std::string& warning : warnings) r.Warn(std::move(warning));
+  return ok;
+}
+
 MigrateFn MigrationStep(std::int32_t from) {
-  (void)from;
-  return nullptr;
+  switch (from) {
+    case 1:  return &MigrateV1ToV2;
+    default: return nullptr;
+  }
 }
 
 bool RunMigrations(toml::table* table, std::int32_t from, std::int32_t target, Reader& r) {
@@ -280,28 +290,7 @@ bool DirectoryWritable(const std::string& dir) {
   return util::is_directory_writable(dir);
 }
 
-#if defined(_MSC_VER)
-#pragma warning(push)
-#pragma warning(disable : 4996)
-#endif
-#if defined(_WIN32)
-std::string OsFallbackRoot() {
-  const char* base = std::getenv("APPDATA");
-  if (base == nullptr || *base == 0) return {};
-  return util::path_join(base, "SimpleMessage");
-}
-#else
-std::string OsFallbackRoot() {
-  const char* xdg = std::getenv("XDG_CONFIG_HOME");
-  if (xdg != nullptr && *xdg != 0) return util::path_join(xdg, "simplemessage");
-  const char* home = std::getenv("HOME");
-  if (home == nullptr || *home == 0) return {};
-  return util::path_join(util::path_join(home, ".config"), "simplemessage");
-}
-#endif
-#if defined(_MSC_VER)
-#pragma warning(pop)
-#endif
+std::string OsFallbackRoot() { return platform::user_config_root(); }
 
 }  // namespace
 
@@ -338,7 +327,7 @@ void AddError(Diagnostics* out, std::string message) {
 
 Paths resolve_paths(const PathOverrides& overrides) {
   Paths paths;
-  const std::string exe_dir = util::exe_directory();
+  const std::string exe_dir = platform::exe_directory();
 
   const std::string requested_config = NormalizeDir(overrides.config_dir, exe_dir);
   const std::string beside_exe =
@@ -381,6 +370,7 @@ Paths resolve_paths(const PathOverrides& overrides) {
   }
 
   paths.config_file = util::path_join(paths.config_dir, SM_DEFAULT_CONFIG_FILE);
+  paths.rules_file = util::path_join(paths.config_dir, "rules.toml");
   paths.plugin_config_dir = util::path_join(paths.config_dir, "plugins");
   paths.log_dir = util::path_join(paths.data_dir, "logs");
   paths.host_dir = util::path_join(paths.data_dir, "host");
@@ -439,7 +429,7 @@ void PluginSettings::Load(const std::string& plugin_id, const std::string& file_
       extra_.reset(new Extra{std::move(parsed)});
       const toml::table& root = extra_->source;
 
-      std::int32_t version = ConfigStore::kSchemaVersion;
+      std::int32_t version = ConfigStore::kSettingsSchemaVersion;
       if (const toml::node* node = root.get("schema_version")) {
         if (const auto* integer = node->as_integer()) {
           version = static_cast<std::int32_t>(integer->get());
@@ -452,17 +442,18 @@ void PluginSettings::Load(const std::string& plugin_id, const std::string& file_
         r.corrected = true;
       }
 
-      if (version > ConfigStore::kSchemaVersion) {
+      if (version > ConfigStore::kSettingsSchemaVersion) {
         schema_too_new_ = true;
         r.Error("插件 " + plugin_id + " 的设置文件 schema_version 为 " +
                 std::to_string(version) + "，高于本宿主支持的 " +
-                std::to_string(ConfigStore::kSchemaVersion) + "，本次不读也不写该文件");
+                std::to_string(ConfigStore::kSettingsSchemaVersion) +
+                "，本次不读也不写该文件");
         return;
       }
 
-      if (version < ConfigStore::kSchemaVersion) {
+      if (version < ConfigStore::kSettingsSchemaVersion) {
         toml::table migrated = root;
-        if (RunMigrations(&migrated, version, ConfigStore::kSchemaVersion, r)) {
+        if (RunMigrations(&migrated, version, ConfigStore::kSettingsSchemaVersion, r)) {
           extra_->source = std::move(migrated);
           r.corrected = true;
         } else {
@@ -662,7 +653,13 @@ ConfigStore::LoadResult ConfigStore::Load(const Paths& paths, bool read_only,
         r.corrected = true;
       }
     } else {
-      r.Warn("缺少 schema_version，按当前版本处理");
+      // 旧版写出的文件总是带版本号；这里兜底手写或被裁剪过的配置：
+      // 有 [plugins] 而没有 instances 的明显是 v1。
+      const bool has_plugins = extra_->source.get("plugins") != nullptr;
+      const bool has_instances = extra_->source.get("instances") != nullptr;
+      version = (has_plugins && !has_instances) ? 1 : kSchemaVersion;
+      r.Warn(version == 1 ? "缺少 schema_version，按版本 1 迁移"
+                          : "缺少 schema_version，按当前版本处理");
       r.corrected = true;
     }
 
@@ -839,19 +836,28 @@ ConfigStore::LoadResult ConfigStore::Load(const Paths& paths, bool read_only,
   WarnUnknownKeys(notify_window, "notify_window", {"monitor", "position"}, &r);
 
   if (extra_ != nullptr) {
-    if (const toml::node* node = extra_->source.get("plugins")) {
-      const toml::table* plugins = node->as_table();
-      if (plugins == nullptr) {
-        r.Warn("[plugins] 不是一个表，本次忽略");
+    InstanceParseResult parsed = ParseInstances(extra_->source);
+    for (std::string& warning : parsed.warnings) r.Warn(std::move(warning));
+    if (parsed.corrected) r.corrected = true;
+    if (parsed.fatal) r.corrected = true;
+    config_.instances = std::move(parsed.instances);
+    config_.removed_types = std::move(parsed.removed_types);
+  }
+
+  if (extra_ != nullptr) {
+    if (const toml::node* node = extra_->source.get("rules")) {
+      const toml::table* rules = node->as_table();
+      if (rules == nullptr) {
+        r.Warn("[rules] 不是一个表，本次忽略");
         r.corrected = true;
       } else {
-        for (auto&& entry : *plugins) {
+        for (auto&& entry : *rules) {
           const std::string id(entry.first.str());
           if (const auto* value = entry.second.as_boolean()) {
-            config_.plugins[id] = value->get();
+            config_.rules[id] = value->get();
           } else {
-            r.Warn("[plugins] 中 " + id + " 的值不是布尔值，按\"启用\"处理");
-            config_.plugins[id] = true;
+            r.Warn("[rules] 中 " + id + " 的值不是布尔值，按\"启用\"处理");
+            config_.rules[id] = true;
             r.corrected = true;
           }
         }
@@ -896,7 +902,8 @@ ConfigStore::LoadResult ConfigStore::Load(const Paths& paths, bool read_only,
     for (auto&& entry : extra_->source) {
       const std::string key(entry.first.str());
       if (key != "schema_version" && key != "app" && key != "notify_window" &&
-          key != "plugins" && key != "routing") {
+          key != "instances" && key != "removed_types" && key != "rules" &&
+          key != "routing") {
         r.Warn("配置里有未知的顶层键 " + key + "，本次忽略（保留在文件中）");
       }
     }
@@ -906,10 +913,162 @@ ConfigStore::LoadResult ConfigStore::Load(const Paths& paths, bool read_only,
   return LoadResult::Ok;
 }
 
-void ConfigStore::SetPluginEnabled(const std::string& plugin_id, bool enabled) {
-  const auto it = config_.plugins.find(plugin_id);
-  if (it != config_.plugins.end() && it->second == enabled) return;
-  config_.plugins[plugin_id] = enabled;
+const InstanceConfig* ConfigStore::FindInstance(const std::string& instance_id) const {
+  for (const InstanceConfig& instance : config_.instances) {
+    if (instance.id == instance_id) return &instance;
+  }
+  return nullptr;
+}
+
+std::size_t ConfigStore::CountInstancesOfType(const std::string& type_id) const {
+  std::size_t count = 0;
+  for (const InstanceConfig& instance : config_.instances) {
+    if (instance.plugin == type_id) ++count;
+  }
+  return count;
+}
+
+bool ConfigStore::AddInstance(InstanceConfig instance, Diagnostics* out) {
+  if (read_only_ || schema_too_new_) {
+    AddError(out, "配置当前为只读，无法添加实例");
+    return false;
+  }
+  if (!host::IsValidInstanceId(instance.id)) {
+    AddError(out, "实例 id \"" + instance.id + "\" 非法");
+    return false;
+  }
+  if (!host::IsValidPluginTypeId(instance.plugin) ||
+      !host::InstanceBelongsToType(instance.id, instance.plugin)) {
+    AddError(out, "实例 " + instance.id + " 不属于插件类型 " + instance.plugin);
+    return false;
+  }
+  if (FindInstance(instance.id) != nullptr) {
+    AddError(out, "实例 id " + instance.id + " 已存在");
+    return false;
+  }
+  if (CountInstancesOfType(instance.plugin) >= host::kMaxInstancesPerType) {
+    AddError(out, "插件类型 " + instance.plugin + " 的实例数已达上限 " +
+                     std::to_string(host::kMaxInstancesPerType));
+    return false;
+  }
+  if (config_.instances.size() >= host::kMaxInstancesTotal) {
+    AddError(out, "实例总数已达上限 " + std::to_string(host::kMaxInstancesTotal));
+    return false;
+  }
+  if (instance.name.size() > host::kMaxInstanceNameBytes) {
+    AddError(out, "实例名称过长（上限 " +
+                     std::to_string(host::kMaxInstanceNameBytes) + " 字节）");
+    return false;
+  }
+  for (char c : instance.name) {
+    if (static_cast<unsigned char>(c) < 0x20u || c == 0x7F) {
+      AddError(out, "实例名称含有控制字符");
+      return false;
+    }
+  }
+
+  const std::string type_id = instance.plugin;
+  config_.instances.push_back(std::move(instance));
+  ClearTypeRemoved(type_id);
+  MarkDirty();
+  return true;
+}
+
+bool ConfigStore::RemoveInstance(const std::string& instance_id, Diagnostics* out) {
+  if (read_only_ || schema_too_new_) {
+    AddError(out, "配置当前为只读，无法删除实例");
+    return false;
+  }
+  for (auto it = config_.instances.begin(); it != config_.instances.end(); ++it) {
+    if (it->id != instance_id) continue;
+    const std::string type_id = it->plugin;
+    config_.instances.erase(it);
+    if (CountInstancesOfType(type_id) == 0) MarkTypeRemoved(type_id);
+    MarkDirty();
+    return true;
+  }
+  AddWarn(out, "实例 " + instance_id + " 不存在");
+  return false;
+}
+
+bool ConfigStore::SetInstanceEnabled(const std::string& instance_id, bool enabled) {
+  for (InstanceConfig& instance : config_.instances) {
+    if (instance.id != instance_id) continue;
+    if (instance.enabled == enabled) return true;
+    instance.enabled = enabled;
+    MarkDirty();
+    return true;
+  }
+  return false;
+}
+
+bool ConfigStore::SetInstanceName(const std::string& instance_id, const std::string& name) {
+  if (read_only_ || schema_too_new_) return false;
+  if (name.size() > host::kMaxInstanceNameBytes) return false;
+  for (char c : name) {
+    if (static_cast<unsigned char>(c) < 0x20u || c == 0x7F) return false;
+  }
+  for (InstanceConfig& instance : config_.instances) {
+    if (instance.id != instance_id) continue;
+    if (instance.name == name) return true;
+    instance.name = name;
+    MarkDirty();
+    return true;
+  }
+  return false;
+}
+
+bool ConfigStore::IsTypeRemoved(const std::string& type_id) const {
+  for (const std::string& removed : config_.removed_types) {
+    if (removed == type_id) return true;
+  }
+  return false;
+}
+
+void ConfigStore::MarkTypeRemoved(const std::string& type_id) {
+  if (IsTypeRemoved(type_id)) return;
+  config_.removed_types.push_back(type_id);
+  MarkDirty();
+}
+
+void ConfigStore::ClearTypeRemoved(const std::string& type_id) {
+  for (auto it = config_.removed_types.begin(); it != config_.removed_types.end(); ++it) {
+    if (*it != type_id) continue;
+    config_.removed_types.erase(it);
+    MarkDirty();
+    return;
+  }
+}
+
+void ConfigStore::ForgetPluginSettings(const std::string& instance_id) {
+  plugin_settings_.erase(instance_id);
+}
+
+bool ConfigStore::DeletePluginSettingsFiles(const std::string& instance_id,
+                                            Diagnostics* out) {
+  if (read_only_ || schema_too_new_) {
+    AddWarn(out, "配置当前为只读，未删除实例设置文件");
+    return false;
+  }
+  const std::string path =
+      util::path_join(paths_.plugin_config_dir, instance_id + ".toml");
+  bool removed = false;
+  for (const std::string& target : {path, path + ".bak"}) {
+    if (!util::file_exists(target)) continue;
+    if (util::remove_file(target)) {
+      removed = true;
+    } else {
+      AddWarn(out, "无法删除实例设置文件：" + target);
+    }
+  }
+  if (removed) AddInfo(out, "已删除实例 " + instance_id + " 的设置文件");
+  return true;
+}
+
+void ConfigStore::SetRuleEnabled(const std::string& rule_id, bool enabled) {
+  const auto it = config_.rules.find(rule_id);
+  if (it != config_.rules.end() && it->second == enabled) return;
+  config_.rules[rule_id] = enabled;
   MarkDirty();
 }
 
@@ -1107,14 +1266,18 @@ bool ConfigStore::WriteConfigFile() {
   notify_window.insert_or_assign("position", CornerName(config_.notify_window.corner));
   root.insert_or_assign("notify_window", std::move(notify_window));
 
-  toml::table plugins;
-  if (const toml::node* node = root.get("plugins")) {
-    if (const toml::table* existing = node->as_table()) plugins = *existing;
+  // v2 起实例注册表取代了 [plugins]；旧表在迁移时已经删除，这里再兜底一次。
+  root.erase("plugins");
+  WriteInstances(&root, config_.instances, config_.removed_types);
+
+  toml::table rules;
+  if (const toml::node* node = root.get("rules")) {
+    if (const toml::table* existing = node->as_table()) rules = *existing;
   }
-  for (const auto& entry : config_.plugins) {
-    plugins.insert_or_assign(entry.first, entry.second);
+  for (const auto& entry : config_.rules) {
+    rules.insert_or_assign(entry.first, entry.second);
   }
-  root.insert_or_assign("plugins", std::move(plugins));
+  root.insert_or_assign("rules", std::move(rules));
 
   toml::table routing;
   if (const toml::node* node = root.get("routing")) {
@@ -1141,7 +1304,8 @@ bool ConfigStore::WriteConfigFile() {
 bool ConfigStore::WritePluginFile(PluginSettings& settings) {
   toml::table root;
   if (settings.extra_ != nullptr) root = settings.extra_->source;
-  root.insert_or_assign("schema_version", static_cast<std::int64_t>(kSchemaVersion));
+  root.insert_or_assign("schema_version",
+                        static_cast<std::int64_t>(kSettingsSchemaVersion));
 
   toml::table values;
   if (const toml::node* node = root.get("settings")) {

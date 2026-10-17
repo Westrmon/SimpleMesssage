@@ -12,11 +12,9 @@
 #include <thread>
 #include <vector>
 
-#ifdef _WIN32
-#include <share.h>
-#endif
-
 #include "host/util.h"
+#include "platform/fs.h"
+#include "platform/system.h"
 
 namespace sm {
 namespace log {
@@ -38,14 +36,6 @@ std::size_t level_index(sm::LogLevel level) {
   if (v < 0) return 0;
   if (v > 4) return 4;
   return static_cast<std::size_t>(v);
-}
-
-bool local_time(std::time_t t, std::tm* out) {
-#ifdef _WIN32
-  return ::localtime_s(out, &t) == 0;
-#else
-  return ::localtime_r(&t, out) != nullptr;
-#endif
 }
 
 struct Record {
@@ -105,7 +95,7 @@ void copy_sanitized(char* dst, std::size_t cap, const char* src, bool mark_trunc
 
 std::int64_t day_key_of(std::time_t t) {
   std::tm tmv{};
-  if (!local_time(t, &tmv)) return 0;
+  if (!platform::local_time(t, &tmv)) return 0;
   return (static_cast<std::int64_t>(tmv.tm_year + 1900) * 10000) +
          ((tmv.tm_mon + 1) * 100) + tmv.tm_mday;
 }
@@ -125,7 +115,7 @@ void format_line(const Record& r, char* out, std::size_t cap) {
   const std::time_t secs = static_cast<std::time_t>(r.time_unix_ms / 1000);
   std::tm tmv{};
   char stamp[32];
-  if (local_time(secs, &tmv)) {
+  if (platform::local_time(secs, &tmv)) {
     std::snprintf(stamp, sizeof(stamp), "%04d-%02d-%02d %02d:%02d:%02d.%03d",
                   tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday, tmv.tm_hour,
                   tmv.tm_min, tmv.tm_sec,
@@ -202,14 +192,8 @@ void cleanup_old_logs_locked(int retention_days, int max_total_mb) {
 }
 
 std::FILE* open_today_locked() {
-#ifdef _WIN32
-  const std::wstring wpath =
-      util::widen(util::path_join(g_log_dir, file_name_for_day_key(today_key())).c_str());
-  return ::_wfsopen(wpath.c_str(), L"ab", _SH_DENYNO);
-#else
-  return std::fopen(util::path_join(g_log_dir, file_name_for_day_key(today_key())).c_str(),
-                    "ab");
-#endif
+  const std::string path = util::path_join(g_log_dir, file_name_for_day_key(today_key()));
+  return platform::fs::open_file(path.c_str(), "ab");
 }
 
 bool append_locked(const char* data, std::size_t len) {

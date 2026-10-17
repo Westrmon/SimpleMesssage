@@ -2,6 +2,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 namespace sm {
 namespace platform {
@@ -78,6 +79,15 @@ struct WorkArea {
 };
 
 WorkArea PrimaryWorkArea();
+
+struct MonitorInfo {
+  std::string device;
+  bool primary = false;
+  WorkArea full{};
+  WorkArea work{};
+};
+
+std::vector<MonitorInfo> EnumerateMonitors();
 
 }  // namespace window
 }  // namespace platform

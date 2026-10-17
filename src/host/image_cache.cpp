@@ -13,25 +13,17 @@
 #include <utility>
 #include <vector>
 
-// windows.h 的 min/max 宏会破坏 <algorithm> 里的 std::min / std::max。
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#include <wincodec.h>
-#include <wrl/client.h>
-
 #ifdef SM_HAVE_CURL
 #include <curl/curl.h>
 #endif
 
+#include "platform/fs.h"
+#include "platform/image.h"
 #include "platform/platform.h"
 
 #include "host/log.h"
 #include "host/ui_session.h"
 #include "host/util.h"
-
-using Microsoft::WRL::ComPtr;
 
 namespace sm {
 namespace host {
@@ -118,9 +110,8 @@ std::string ShortSource(const std::string& source) {
 
 bool ReadFileBytes(const std::string& utf8_path, std::vector<unsigned char>* out,
                    std::string* error) {
-  FILE* file = nullptr;
-  if (::_wfopen_s(&file, util::widen(utf8_path.c_str()).c_str(), L"rb") != 0 ||
-      file == nullptr) {
+  FILE* file = platform::fs::open_file(utf8_path.c_str(), "rb");
+  if (file == nullptr) {
     *error = "无法打开文件";
     return false;
   }
@@ -223,141 +214,6 @@ bool DownloadBytes(const std::string& url, std::vector<unsigned char>* out,
 }
 #endif  // SM_HAVE_CURL
 
-struct DecodedImage {
-  int width = 0;
-  int height = 0;
-  std::vector<unsigned char> rgba;
-};
-
-bool DecodeImage(const std::vector<unsigned char>& bytes, DecodedImage* out,
-                 std::string* error) {
-  if (bytes.empty()) {
-    *error = "图片数据为空";
-    return false;
-  }
-
-  const HRESULT init = ::CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-  // RPC_E_CHANGED_MODE 表示这个线程已经以别的套间模型初始化过 COM —— WIC 仍然可用。
-  const bool uninit = SUCCEEDED(init);
-  if (FAILED(init) && init != RPC_E_CHANGED_MODE) {
-    *error = "COM 初始化失败";
-    return false;
-  }
-
-  const auto finish = [uninit]() {
-    if (uninit) ::CoUninitialize();
-  };
-
-  ComPtr<IWICImagingFactory> factory;
-  HRESULT hr = ::CoCreateInstance(
-      CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
-      __uuidof(IWICImagingFactory),
-      reinterpret_cast<void**>(factory.GetAddressOf()));
-  if (FAILED(hr) || factory == nullptr) {
-    *error = "创建 WIC 工厂失败";
-    finish();
-    return false;
-  }
-
-  ComPtr<IWICStream> stream;
-  hr = factory->CreateStream(stream.GetAddressOf());
-  if (SUCCEEDED(hr)) {
-    hr = stream->InitializeFromMemory(
-        const_cast<BYTE*>(bytes.data()), static_cast<DWORD>(bytes.size()));
-  }
-  if (FAILED(hr)) {
-    *error = "无法从内存建立图片流";
-    finish();
-    return false;
-  }
-
-  ComPtr<IWICBitmapDecoder> decoder;
-  hr = factory->CreateDecoderFromStream(stream.Get(), nullptr,
-                                        WICDecodeMetadataCacheOnDemand,
-                                        decoder.GetAddressOf());
-  if (FAILED(hr) || decoder == nullptr) {
-    *error = "无法识别图片格式";
-    finish();
-    return false;
-  }
-
-  ComPtr<IWICBitmapFrameDecode> frame;
-  hr = decoder->GetFrame(0, frame.GetAddressOf());
-  if (FAILED(hr) || frame == nullptr) {
-    *error = "图片没有可解码的帧";
-    finish();
-    return false;
-  }
-
-  UINT source_width = 0;
-  UINT source_height = 0;
-  hr = frame->GetSize(&source_width, &source_height);
-  if (FAILED(hr) || source_width == 0 || source_height == 0) {
-    *error = "图片尺寸无效";
-    finish();
-    return false;
-  }
-  if (static_cast<unsigned long long>(source_width) * source_height >
-      kMaxSourcePixels) {
-    *error = "图片尺寸过大";
-    finish();
-    return false;
-  }
-
-  ComPtr<IWICFormatConverter> converter;
-  hr = factory->CreateFormatConverter(converter.GetAddressOf());
-  if (SUCCEEDED(hr)) {
-    hr = converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppRGBA,
-                               WICBitmapDitherTypeNone, nullptr, 0.0,
-                               WICBitmapPaletteTypeCustom);
-  }
-  if (FAILED(hr)) {
-    *error = "图片像素格式转换失败";
-    finish();
-    return false;
-  }
-
-  int width = static_cast<int>(source_width);
-  int height = static_cast<int>(source_height);
-  ComPtr<IWICBitmapScaler> scaler;
-  ComPtr<IWICBitmapSource> source = converter;
-  if (width > kMaxDecodedDimension || height > kMaxDecodedDimension) {
-    const double scale =
-        std::min(static_cast<double>(kMaxDecodedDimension) / width,
-                 static_cast<double>(kMaxDecodedDimension) / height);
-    width = std::max(1, static_cast<int>(width * scale + 0.5));
-    height = std::max(1, static_cast<int>(height * scale + 0.5));
-    hr = factory->CreateBitmapScaler(scaler.GetAddressOf());
-    if (SUCCEEDED(hr)) {
-      hr = scaler->Initialize(converter.Get(), static_cast<UINT>(width),
-                              static_cast<UINT>(height),
-                              WICBitmapInterpolationModeFant);
-    }
-    if (FAILED(hr)) {
-      *error = "图片缩放失败";
-      finish();
-      return false;
-    }
-    source = scaler;
-  }
-
-  const UINT stride = static_cast<UINT>(width) * 4u;
-  out->width = width;
-  out->height = height;
-  out->rgba.resize(static_cast<std::size_t>(stride) * static_cast<std::size_t>(height));
-  hr = source->CopyPixels(nullptr, stride, static_cast<UINT>(out->rgba.size()),
-                          out->rgba.data());
-  if (FAILED(hr)) {
-    *error = "读取图片像素失败";
-    out->rgba.clear();
-    finish();
-    return false;
-  }
-
-  finish();
-  return true;
-}
-
 }  // namespace
 
 struct ImageCache::Entry {
@@ -417,7 +273,7 @@ void ImageCache::LoadWorker(std::shared_ptr<State> state,
                             std::string data_dir) {
   std::vector<unsigned char> bytes;
   std::string error;
-  DecodedImage decoded;
+  platform::DecodedImage decoded;
 
   bool ok = false;
   try {
@@ -432,7 +288,10 @@ void ImageCache::LoadWorker(std::shared_ptr<State> state,
       ok = ReadFileBytes(path, &bytes, &error);
     }
 
-    if (ok) ok = DecodeImage(bytes, &decoded, &error);
+    if (ok) {
+      ok = platform::DecodeImageRgba(bytes, kMaxDecodedDimension, kMaxSourcePixels,
+                                     &decoded, &error);
+    }
     if (ok && decoded.rgba.empty()) ok = false;
   } catch (const std::exception& e) {
     // 这是 detached 线程：异常穿出去会 std::terminate 整个进程。

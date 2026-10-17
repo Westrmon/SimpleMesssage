@@ -4,9 +4,8 @@
 
 #include <new>
 
-#include <windows.h>
-#include <GL/gl.h>
-
+// GLFW 会先把 APIENTRY / WINGDIAPI 定义好再引入系统的 GL 头，
+// 所以这里不要再自己包含 <windows.h> 或 <GL/gl.h>。
 #include "GLFW/glfw3.h"
 
 #include "imgui.h"

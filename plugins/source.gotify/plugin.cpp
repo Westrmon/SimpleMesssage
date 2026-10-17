@@ -944,8 +944,19 @@ Config GotifySource::ReadConfig() {
   cfg.client_name = Trim(text("client_name", "SimpleMessage"));
   if (cfg.client_name.empty()) cfg.client_name = "SimpleMessage";
   if (const char* data_dir = host()->data_dir(); data_dir != nullptr) {
-    cfg.token_cache_path =
-        std::string(data_dir) + "/source.gotify-client-token.json";
+    // 每个实例必须有自己的 token 缓存：文件名从自己的设置文件派生。
+    // 首个实例仍得到旧的 source.gotify-client-token.json，@2 起各自独立。
+    std::string stem = "source.gotify";
+    if (const char* own = host()->own_config_path(); own != nullptr && *own != '\0') {
+      std::string own_path(own);
+      const std::size_t slash = own_path.find_last_of("/\\");
+      stem = (slash == std::string::npos) ? own_path : own_path.substr(slash + 1);
+      if (stem.size() > 5 && stem.compare(stem.size() - 5, 5, ".toml") == 0) {
+        stem.resize(stem.size() - 5);
+      }
+      if (stem.empty()) stem = "source.gotify";
+    }
+    cfg.token_cache_path = std::string(data_dir) + "/" + stem + "-client-token.json";
   }
 
   std::string problem;

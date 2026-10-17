@@ -12,7 +12,8 @@
 #include <windows.h>
 
 #include "host/log.h"
-#include "host/util.h"
+#include "platform/system.h"
+#include "platform/utf8.h"
 
 namespace sm {
 namespace platform {
@@ -41,7 +42,7 @@ std::string describe_win32_error(DWORD code) {
     while (!w.empty() && (w.back() == L'\r' || w.back() == L'\n' || w.back() == L' ')) {
       w.pop_back();
     }
-    text = util::narrow(w.c_str());
+    text = utf8::narrow(w.c_str());
   } else {
     text = "系统未提供说明";
   }
@@ -98,13 +99,13 @@ void ensure_search_path_once() {
 
     if (set_default != nullptr && add_directory != nullptr &&
         set_default(LOAD_LIBRARY_SEARCH_DEFAULT_DIRS) != FALSE) {
-      const std::wstring exe_dir = util::widen(util::exe_directory().c_str());
+      const std::wstring exe_dir = utf8::widen(exe_directory().c_str());
       if (!exe_dir.empty()) add_directory(exe_dir.c_str());
       search_path_state().restricted = true;
       return;
     }
 
-    const std::wstring exe_dir = util::widen(util::exe_directory().c_str());
+    const std::wstring exe_dir = utf8::widen(exe_directory().c_str());
     if (!exe_dir.empty()) ::SetDllDirectoryW(exe_dir.c_str());
     search_path_state().restricted = false;
 
@@ -200,7 +201,7 @@ IModule* load_module(const char* utf8_path, const char** out_error) {
 
   ensure_search_path_once();
 
-  const std::wstring wpath = resolve_full_path(util::widen(utf8_path).c_str());
+  const std::wstring wpath = resolve_full_path(utf8::widen(utf8_path).c_str());
   const DWORD flags =
       search_path_state().restricted ? LOAD_LIBRARY_SEARCH_DEFAULT_DIRS : 0u;
 
@@ -213,7 +214,7 @@ IModule* load_module(const char* utf8_path, const char** out_error) {
     return nullptr;
   }
 
-  auto* module = new (std::nothrow) Win32Module(handle, util::narrow(wpath.c_str()));
+  auto* module = new (std::nothrow) Win32Module(handle, utf8::narrow(wpath.c_str()));
   if (module == nullptr) {
     ::FreeLibrary(handle);
     if (out_error != nullptr) *out_error = store_error("内存不足，无法记录模块句柄");
@@ -255,7 +256,7 @@ std::int64_t monotonic_ms() {
 
 void emit_debug_output(const char* utf8_line) {
   if (utf8_line == nullptr) return;
-  const std::wstring line = util::widen(utf8_line);
+  const std::wstring line = utf8::widen(utf8_line);
   ::OutputDebugStringW(line.c_str());
 }
 

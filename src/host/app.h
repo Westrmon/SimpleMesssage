@@ -10,7 +10,6 @@
 #include "host/config.h"
 #include "host/image_cache.h"
 #include "host/internal_source.h"
-#include "host/message_window.h"
 #include "host/notification_pipeline.h"
 #include "host/plugin_manager.h"
 #include "host/render_backend.h"
@@ -20,8 +19,9 @@
 #include "host/ui_session.h"
 #include "host/ui_state.h"
 
+#include "platform/message_window.h"
+#include "platform/tray.h"
 #include "platform/window.h"
-#include "platform/win32/tray.h"
 
 namespace sm {
 namespace host {
@@ -36,7 +36,7 @@ enum class ExitCode : int {
 class App final : public IPanelHost,
                   public IPluginEventSink,
                   public IPluginActionSink,
-                  public platform::win32::ITrayHost {
+                  public platform::ITrayHost {
  public:
   App();
   ~App() override;
@@ -44,17 +44,24 @@ class App final : public IPanelHost,
   App(const App&) = delete;
   App& operator=(const App&) = delete;
 
-  int Run(int argc, wchar_t** argv);
+  int Run(const std::vector<std::string>& args);
 
  private:
   enum class ArgsResult { kContinue, kHandled };
 
-  ArgsResult ParseArgs(int argc, wchar_t** argv);
+  ArgsResult ParseArgs(const std::vector<std::string>& args);
   ExitCode StartupConfigAndLogging();
   bool AcquireSingleInstance();
   bool InitPlatform();
   bool WireSubsystems();
   void RebuildRouting();
+
+  // 规则文件缺失时写默认模板（安全模式只读内存，不落盘）；reload=true 时
+  // 解析失败会保留现有规则集。
+  bool LoadRules(bool reload);
+  std::shared_ptr<RuleSet> rules_snapshot() const override;
+  bool                     ReloadRules() override;
+  void                     SetRuleEnabled(const std::string& id, bool enabled) override;
 
   void RunMessageLoop();
   void FrameStep(std::int64_t now_ms);
@@ -104,10 +111,8 @@ class App final : public IPanelHost,
   void OnContentScale(float scale);
   static void WindowContentScaleThunk(void* user, float scale);
   void ReportFontFallback(const IUiRuntime* runtime);
-  bool HandleMessageWindowMessage(HWND hwnd, UINT message, WPARAM wparam,
-                                  LPARAM lparam);
-  static bool MessageWindowThunk(void* user, HWND hwnd, UINT message, WPARAM wparam,
-                                 LPARAM lparam);
+  bool HandleSystemEvent(const platform::SystemEvent& event);
+  static bool SystemEventThunk(void* user, const platform::SystemEvent& event);
 
   void Shutdown();
   void DrainConfigDiagnostics();
@@ -162,13 +167,14 @@ class App final : public IPanelHost,
 
   Router               router_;
   NotificationPipeline pipeline_;
+  std::shared_ptr<RuleSet> rules_;
   ActionDispatcher     actions_;
   InternalSource       internal_source_;
 
   PluginManager plugins_;
   Scheduler     scheduler_;
 
-  MessageWindow     messages_;
+  std::unique_ptr<platform::IMessageWindow> messages_;
   std::unique_ptr<platform::window::IWindow> window_;
   IUiRuntime*       runtime_ = nullptr;
   IUiFrameRenderer* frame_ = nullptr;
@@ -188,7 +194,7 @@ class App final : public IPanelHost,
   UiStateLoad       ui_state_load_ = UiStateLoad::Missing;
   std::unique_ptr<UiPanel> panel_;
 
-  platform::win32::ITray*        tray_ = nullptr;
+  platform::ITray*               tray_ = nullptr;
   platform::ISingleInstanceLock* instance_lock_ = nullptr;
   bool                           owns_instance_ = false;
 

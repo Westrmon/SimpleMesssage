@@ -1,6 +1,6 @@
 // SimpleMessage — Win32 托盘图标与右键菜单的实现
 
-#include "platform/win32/tray.h"
+#include "platform/tray.h"
 
 #include <cwchar>
 #include <new>
@@ -10,12 +10,11 @@
 #include <shellapi.h>
 
 #include "host/log.h"
-#include "host/util.h"
+#include "platform/utf8.h"
 #include "platform/win32/icon.h"
 
 namespace sm {
 namespace platform {
-namespace win32 {
 namespace {
 
 constexpr wchar_t kTrayWindowClass[] = L"SimpleMessage.TrayWindow";
@@ -82,7 +81,7 @@ class Win32Tray final : public ITray {
   }
 
   void SetLevel(const sm::Level* level) override {
-    HICON resolved = LoadLevelIcon(level, TrayIconSize());
+    HICON resolved = win32::LoadLevelIcon(level, TrayIconSize());
     if (resolved == nullptr) return;
     if (resolved == icon_) return;
     icon_ = resolved;
@@ -93,8 +92,8 @@ class Win32Tray final : public ITray {
 
   void ShowBalloon(const char* title_utf8, const char* text_utf8) override {
     if (!added_) return;
-    const std::wstring title = util::widen(title_utf8);
-    const std::wstring text = util::widen(text_utf8);
+    const std::wstring title = utf8::widen(title_utf8);
+    const std::wstring text = utf8::widen(text_utf8);
     nid_.uFlags |= NIF_INFO;
     nid_.dwInfoFlags = NIIF_INFO;
     nid_.uTimeout = 10000;
@@ -110,7 +109,7 @@ class Win32Tray final : public ITray {
     nid_.cbSize = sizeof(nid_);
     nid_.hWnd = hwnd_;
     nid_.uID = 1;
-    if (icon_ == nullptr) icon_ = LoadLevelIcon(nullptr, TrayIconSize());
+    if (icon_ == nullptr) icon_ = win32::LoadLevelIcon(nullptr, TrayIconSize());
     ApplyFields();
     if (!::Shell_NotifyIconW(NIM_ADD, &nid_)) {
       sm::log::Writef(sm::LogLevel::Warn, "tray", "托盘图标添加失败（Win32 错误 %lu）",
@@ -126,7 +125,7 @@ class Win32Tray final : public ITray {
     nid_.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     nid_.uCallbackMessage = kTrayCallbackMessage;
     nid_.hIcon = icon_;
-    ::wcsncpy_s(nid_.szTip, util::widen(labels_.tooltip).c_str(), _TRUNCATE);
+    ::wcsncpy_s(nid_.szTip, utf8::widen(labels_.tooltip).c_str(), _TRUNCATE);
   }
 
   void ShowMenu() {
@@ -159,7 +158,7 @@ class Win32Tray final : public ITray {
   }
 
   static void AppendItem(HMENU menu, UINT command, const char* label, bool checked) {
-    const std::wstring text = util::widen(label);
+    const std::wstring text = utf8::widen(label);
     UINT flags = MF_STRING;
     if (checked) flags |= MF_CHECKED;
     ::AppendMenuW(menu, flags, command, text.c_str());
@@ -243,6 +242,5 @@ class Win32Tray final : public ITray {
 
 ITray* create_tray() { return new (std::nothrow) Win32Tray(); }
 
-}  // namespace win32
 }  // namespace platform
 }  // namespace sm

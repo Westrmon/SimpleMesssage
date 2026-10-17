@@ -1,4 +1,4 @@
-// SimpleMessage — 控制面板的六页
+// SimpleMessage — 控制面板的七页
 #include "host/ui_panel.h"
 
 #include <algorithm>
@@ -7,20 +7,11 @@
 #include <string>
 #include <vector>
 
-#ifdef _WIN32
-#  ifndef WIN32_LEAN_AND_MEAN
-#    define WIN32_LEAN_AND_MEAN
-#  endif
-#  ifndef NOMINMAX
-#    define NOMINMAX
-#  endif
-#  include <windows.h>
-#  include <commdlg.h>
-#endif
-
 #include "imgui.h"
 
+#include "platform/dialog.h"
 #include "platform/platform.h"
+#include "platform/system.h"
 #include "sm/version.h"
 #include "sm/version_range.h"
 
@@ -67,6 +58,14 @@ const PluginInfo* FindPlugin(const std::vector<PluginInfo>& plugins, const std::
     if (info.id == id) return &info;
   }
   return nullptr;
+}
+
+bool ReadOnlyMode(const UiPanelSetup& setup) {
+  if (setup.config == nullptr || setup.config->read_only() ||
+      setup.config->SchemaTooNewDetected()) {
+    return true;
+  }
+  return setup.host != nullptr && setup.host->safe_mode();
 }
 
 std::string PluginConfigPath(const config::Paths& paths, const std::string& id) {
@@ -149,17 +148,7 @@ std::string CompilerText() {
 #endif
 }
 
-const char* PlatformText() {
-#if defined(_M_X64)
-  return "x64";
-#elif defined(_M_ARM64)
-  return "arm64";
-#elif defined(_M_IX86)
-  return "x86";
-#else
-  return "未知";
-#endif
-}
+const char* PlatformText() { return platform::architecture_name(); }
 
 void LabelRow(const char* label, const std::string& value) {
   ImGui::Text(strings::kLabelValueFormat, label, value.c_str());
@@ -181,23 +170,13 @@ void PathRow(const char* label, const std::string& path, IPanelHost* host) {
 }
 
 std::string AskExportPath(const std::string& default_dir) {
-  std::vector<wchar_t> buffer(MAX_PATH, L'\0');
-  const std::wstring initial_name = util::widen("simplemessage-notifications.jsonl");
-  std::copy(initial_name.begin(), initial_name.end(), buffer.begin());
-  const std::wstring initial_dir = util::widen(default_dir.c_str());
-
-  OPENFILENAMEW ofn{};
-  ofn.lStructSize = sizeof(ofn);
-  ofn.hwndOwner = ::GetActiveWindow();
-  ofn.lpstrFilter = L"JSON Lines (*.jsonl)\0*.jsonl\0所有文件 (*.*)\0*.*\0";
-  ofn.lpstrFile = buffer.data();
-  ofn.nMaxFile = static_cast<DWORD>(buffer.size());
-  ofn.lpstrDefExt = L"jsonl";
-  ofn.lpstrInitialDir = initial_dir.empty() ? nullptr : initial_dir.c_str();
-  ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
-
-  if (::GetSaveFileNameW(&ofn) == 0) return std::string();
-  return util::narrow(buffer.data());
+  platform::SaveFileDialogOptions options;
+  options.default_name = "simplemessage-notifications.jsonl";
+  options.initial_directory = default_dir;
+  options.filter_label = "JSON Lines (*.jsonl)";
+  options.filter_extension = "jsonl";
+  options.all_files_label = "所有文件 (*.*)";
+  return platform::ShowSaveFileDialog(options);
 }
 
 }  // namespace
@@ -358,6 +337,7 @@ void UiPanel::DrawOverviewPage() {
 void UiPanel::DrawPluginsPage() {
   if (setup_.plugins == nullptr) return;
 
+  const bool readonly = ReadOnlyMode(setup_);
   std::vector<PluginInfo> rows = setup_.plugins->Snapshot();
   rows.push_back(InternalSource::Info());
 
@@ -370,16 +350,29 @@ void UiPanel::DrawPluginsPage() {
     }
   };
 
-  const auto set_all = [&rows, &set_enabled](bool enabled) {
+  // 批量操作只作用于真实实例：类型行、被拒绝的实例与宿主内建来源都跳过。
+  const auto set_all = [&rows, &set_enabled, readonly](bool enabled) {
+    if (readonly) return;
     for (const PluginInfo& info : rows) {
+      if (!info.is_instance || info.state == PluginState::Rejected) continue;
+      if (InternalSource::IsInternalId(info.id)) continue;
       if (info.enabled == enabled) continue;
       set_enabled(info, enabled);
     }
   };
 
+  if (readonly) ImGui::BeginDisabled();
+  if (ImGui::Button(strings::kAddInstance)) OpenAddInstancePopup(std::string());
+  if (readonly) ImGui::EndDisabled();
+  ImGui::SameLine();
   if (ImGui::Button(strings::kBulkEnableAll)) set_all(true);
   ImGui::SameLine();
   if (ImGui::Button(strings::kBulkDisableAll)) set_all(false);
+
+  if (readonly) {
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", strings::kInstanceReadonlyHint);
+  }
 
   if (rows.size() == 1) ImGui::TextDisabled("%s", strings::kNoPlugins);
 
@@ -407,7 +400,8 @@ void UiPanel::DrawPluginsPage() {
       ImGui::TableSetColumnIndex(0);
       bool enabled = info.enabled;
       const bool is_internal = InternalSource::IsInternalId(info.id);
-      const bool can_toggle = !is_internal && info.state != PluginState::Rejected;
+      const bool can_toggle = !readonly && !is_internal && info.is_instance &&
+                              info.state != PluginState::Rejected;
       if (!can_toggle) ImGui::BeginDisabled();
       if (ImGui::Checkbox("##enabled", &enabled) && can_toggle) set_enabled(info, enabled);
       if (!can_toggle) ImGui::EndDisabled();
@@ -454,12 +448,15 @@ void UiPanel::DrawPluginsPage() {
 }
 
 void UiPanel::DrawPluginDetail(const PluginInfo& info) {
+  const bool is_internal = InternalSource::IsInternalId(info.id);
+  const bool readonly = ReadOnlyMode(setup_);
+
   ImGui::Separator();
   ImGui::TextUnformatted(info.name.empty() ? info.id.c_str() : info.name.c_str());
   ImGui::SameLine();
   ImGui::TextDisabled("%s", info.id.c_str());
 
-  const float detail_height = ImGui::GetTextLineHeightWithSpacing() * 14.0f;
+  const float detail_height = ImGui::GetTextLineHeightWithSpacing() * 16.0f;
   if (ImGui::BeginChild("##plugin_detail", ImVec2(0.0f, detail_height),
                         ImGuiChildFlags_Borders)) {
     ImGui::PushTextWrapPos(0.0f);
@@ -473,48 +470,117 @@ void UiPanel::DrawPluginDetail(const PluginInfo& info) {
                           satisfied ? strings::kHostRangeOk : strings::kHostRangeBad);
       if (!satisfied && error != nullptr) ImGui::TextDisabled("%s", error);
     }
+    if (!is_internal && !info.type_id.empty()) {
+      ImGui::Text(strings::kInstanceTypeFormat, info.type_name.c_str(),
+                  info.type_id.c_str());
+    }
+    if (info.is_instance) {
+      ImGui::Text(strings::kInstanceIdFormat, info.id.c_str());
+      ImGui::Text(strings::kInstanceOrdinalFormat,
+                  static_cast<int>(info.instance_ordinal),
+                  static_cast<int>(info.instance_count));
+    } else if (!is_internal) {
+      ImGui::TextWrapped("%s", info.is_rejected_type ? strings::kInstanceRejectedHint
+                                                     : strings::kInstanceNone);
+      if (!info.is_rejected_type) ImGui::TextDisabled("%s", strings::kInstanceTypeRowHint);
+    }
     if (!info.reason.empty()) ImGui::TextWrapped(strings::kReasonFormat, info.reason.c_str());
     ImGui::PopTextWrapPos();
 
-    if (info.state == PluginState::Disabled && !InternalSource::IsInternalId(info.id)) {
-      if (ImGui::Button(strings::kReEnable)) setup_.plugins->Enable(info.id);
-      ImGui::SameLine();
+    if (info.state == PluginState::Disabled && !is_internal) {
+      if (!readonly) {
+        if (ImGui::Button(strings::kReEnable)) setup_.plugins->Enable(info.id);
+        ImGui::SameLine();
+      }
       ImGui::TextDisabled("%s", strings::kReEnableHint);
     }
     if (info.state == PluginState::InitializeFailed) {
-      if (ImGui::Button(strings::kRetry)) setup_.plugins->RetryInitialize(info.id);
-    }
-
-    ImGui::SeparatorText(strings::kSecSettings);
-    if (info.setting_count == 0) {
-      ImGui::TextDisabled("%s", strings::kNoSettings);
-    } else if (info.settings.data == nullptr) {
-      std::string state_text;
-      ImVec4 state_color;
-      StateText(info, &state_text, &state_color);
-      ImGui::TextWrapped(strings::kSettingsUnavailableFormat, state_text.c_str());
-    } else {
-      config::Diagnostics diagnostics;
-      config::PluginSettings& settings =
-          setup_.config->EnsurePluginSettings(info.id, info.settings, &diagnostics);
-      LogConfigDiagnostics(diagnostics);
-      if (settings.schema_too_new()) {
-        ImGui::TextWrapped("%s", strings::kSettingSchemaTooNew);
-      } else {
-        ImGui::TextDisabled("%s", strings::kSettingDirtyHint);
-        DrawSettingsForm(info.id.c_str(), settings, info.settings, &form_state_);
+      if (!readonly) {
+        if (ImGui::Button(strings::kRetry)) setup_.plugins->RetryInitialize(info.id);
+        ImGui::SameLine();
       }
     }
 
-    if (setup_.config != nullptr) {
-      ImGui::TextDisabled(strings::kConfigPathFormat,
-                          PluginConfigPath(setup_.config->PathsRef(), info.id).c_str());
-      if (info.setting_count > 0 && !InternalSource::IsInternalId(info.id)) {
-        if (ImGui::Button(strings::kResetSettings)) {
-          reset_settings_pending_ = true;
-          reset_settings_plugin_ = info.id;
+    if (info.is_instance) {
+      // ---- 实例名称 ----
+      ImGui::SeparatorText(strings::kInstanceNameLabel);
+      if (readonly) ImGui::BeginDisabled();
+      std::string name = info.custom_name;
+      if (InputTextStdString("##instance_name", info.id.c_str(), &name, 96,
+                             &instance_name_state_)) {
+        setup_.plugins->RenameInstance(info.id, name);
+      }
+      if (readonly) ImGui::EndDisabled();
+      ImGui::TextDisabled("%s", readonly ? strings::kInstanceReadonlyHint
+                                         : strings::kInstanceNameHint);
+
+      // ---- 设置 ----
+      ImGui::SeparatorText(strings::kSecSettings);
+      if (info.state == PluginState::Rejected) {
+        ImGui::TextWrapped("%s", strings::kInstanceRejectedHint);
+      } else if (info.setting_count == 0) {
+        ImGui::TextDisabled("%s", strings::kNoSettings);
+      } else if (info.settings.data == nullptr) {
+        std::string state_text;
+        ImVec4 state_color;
+        StateText(info, &state_text, &state_color);
+        ImGui::TextWrapped(strings::kSettingsUnavailableFormat, state_text.c_str());
+      } else {
+        config::Diagnostics diagnostics;
+        config::PluginSettings& settings =
+            setup_.config->EnsurePluginSettings(info.id, info.settings, &diagnostics);
+        LogConfigDiagnostics(diagnostics);
+        if (settings.schema_too_new()) {
+          ImGui::TextWrapped("%s", strings::kSettingSchemaTooNew);
+        } else {
+          ImGui::TextDisabled("%s", strings::kSettingDirtyHint);
+          DrawSettingsForm(info.id.c_str(), settings, info.settings, &form_state_);
         }
       }
+
+      if (setup_.config != nullptr) {
+        ImGui::TextDisabled(strings::kConfigPathFormat,
+                            PluginConfigPath(setup_.config->PathsRef(), info.id).c_str());
+        if (info.setting_count > 0 && !readonly &&
+            info.state != PluginState::Rejected) {
+          if (ImGui::Button(strings::kResetSettings)) {
+            reset_settings_pending_ = true;
+            reset_settings_plugin_ = info.id;
+          }
+        }
+      }
+
+      // ---- 删除实例 ----
+      if (!is_internal && info.kind == sm::PluginKind::Source &&
+          info.can_delete_instance) {
+        ImGui::Separator();
+        if (readonly) ImGui::BeginDisabled();
+        if (ImGui::Button(strings::kInstanceDelete)) {
+          delete_instance_pending_ = true;
+          delete_instance_id_ = info.id;
+          delete_instance_name_ = info.name;
+          delete_instance_path_ = info.settings_path;
+          delete_instance_error_.clear();
+        }
+        if (readonly) ImGui::EndDisabled();
+      }
+    } else if (!is_internal) {
+      // ---- 零实例 / 被拒绝的类型行 ----
+      if (!info.path.empty()) {
+        ImGui::TextDisabled("%s", info.path.c_str());
+      }
+      if (!info.is_rejected_type) {
+        ImGui::Separator();
+        if (readonly) ImGui::BeginDisabled();
+        if (ImGui::Button(strings::kInstanceAddForType)) {
+          OpenAddInstancePopup(info.type_id);
+        }
+        if (readonly) ImGui::EndDisabled();
+      }
+    } else {
+      // 宿主内建来源不是插件类型，没有设置也没有实例。
+      ImGui::SeparatorText(strings::kSecSettings);
+      ImGui::TextDisabled("%s", strings::kNoSettings);
     }
   }
   ImGui::EndChild();
@@ -696,6 +762,184 @@ void UiPanel::ExportNotifications(const std::vector<const OwnedNotification*>& i
   } else {
     export_failed_ = true;
     export_message_ = Fmt(strings::kExportFailedFormat, path.c_str(), error.c_str());
+  }
+}
+
+void UiPanel::DrawRulesPage() {
+  if (setup_.host == nullptr || setup_.config == nullptr) return;
+
+  ImGui::TextDisabled("%s", strings::kRulesReadonly);
+  ImGui::TextDisabled(strings::kRulesFileFormat,
+                      setup_.config->PathsRef().rules_file.c_str());
+
+  const std::shared_ptr<RuleSet> rules = setup_.host->rules_snapshot();
+
+  if (ImGui::Button(strings::kRulesReload)) {
+    const bool ok = setup_.host->ReloadRules();
+    const std::shared_ptr<RuleSet> reloaded = setup_.host->rules_snapshot();
+    if (ok && reloaded != nullptr) {
+      rules_status_ =
+          Fmt(strings::kRulesReloadOkFormat, static_cast<int>(reloaded->size()));
+    } else {
+      rules_status_ = strings::kRulesReloadFailed;
+    }
+    selected_rule_ = -1;
+  }
+  if (!rules_status_.empty()) {
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", rules_status_.c_str());
+  }
+
+  if (setup_.host->safe_mode()) {
+    ImGui::TextColored(kColorWarn, "%s", strings::kRulesSafeModeHint);
+  }
+
+  if (rules == nullptr || rules->empty()) {
+    ImGui::Separator();
+    ImGui::TextDisabled("%s", strings::kRulesNone);
+    if (rules != nullptr && rules->skipped() > 0) {
+      ImGui::TextColored(kColorWarn, strings::kRulesSkippedFormat,
+                         static_cast<int>(rules->skipped()));
+    }
+    return;
+  }
+
+  ImGui::Separator();
+  ImGui::TextDisabled(strings::kRulesCountFormat,
+                      static_cast<int>(rules->size()));
+  if (rules->skipped() > 0) {
+    ImGui::SameLine();
+    ImGui::TextColored(kColorWarn, strings::kRulesSkippedFormat,
+                       static_cast<int>(rules->skipped()));
+  }
+
+  const ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
+                                ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingFixedFit;
+  const ImVec2 size(0.0f, ImGui::GetTextLineHeightWithSpacing() * 12.0f);
+
+  if (ImGui::BeginTable("##rules", 5, flags, size)) {
+    ImGui::TableSetupScrollFreeze(0, 1);
+    ImGui::TableSetupColumn(strings::kColRuleEnabled,
+                            ImGuiTableColumnFlags_WidthFixed);
+    ImGui::TableSetupColumn(strings::kColRuleIndex, ImGuiTableColumnFlags_WidthFixed);
+    ImGui::TableSetupColumn(strings::kColName, ImGuiTableColumnFlags_WidthStretch);
+    ImGui::TableSetupColumn(strings::kColRuleHits, ImGuiTableColumnFlags_WidthFixed);
+    ImGui::TableSetupColumn(strings::kColState, ImGuiTableColumnFlags_WidthFixed);
+    ImGui::TableHeadersRow();
+
+    for (std::size_t i = 0; i < rules->size(); ++i) {
+      const Rule& rule = rules->rules()[i];
+      const bool enabled = rules->enabled(i);
+      const RuleCounters counters = rules->counters(i);
+
+      ImGui::PushID(rule.id.c_str());
+      ImGui::TableNextRow();
+
+      ImGui::TableSetColumnIndex(0);
+      bool value = enabled;
+      const bool can_toggle = !setup_.host->safe_mode();
+      if (!can_toggle) ImGui::BeginDisabled();
+      if (ImGui::Checkbox("##enabled", &value) && can_toggle) {
+        setup_.host->SetRuleEnabled(rule.id, value);
+      }
+      if (!can_toggle) ImGui::EndDisabled();
+
+      ImGui::TableSetColumnIndex(1);
+      ImGui::TextDisabled("%d", static_cast<int>(i + 1));
+
+      ImGui::TableSetColumnIndex(2);
+      const bool selected = selected_rule_ == static_cast<int>(i);
+      if (ImGui::Selectable(rule.name.c_str(), selected,
+                            ImGuiSelectableFlags_AllowDoubleClick)) {
+        selected_rule_ = static_cast<int>(i);
+      }
+
+      ImGui::TableSetColumnIndex(3);
+      ImGui::Text("%lld / %lld", static_cast<long long>(counters.hits),
+                  static_cast<long long>(counters.blocked));
+
+      ImGui::TableSetColumnIndex(4);
+      ImGui::TextColored(enabled ? kColorOk : kColorDim, "%s",
+                         enabled ? strings::kRuleStatusEnabled
+                                 : strings::kRuleStatusDisabled);
+
+      ImGui::PopID();
+    }
+    ImGui::EndTable();
+  }
+
+  if (selected_rule_ >= 0 &&
+      selected_rule_ < static_cast<int>(rules->size())) {
+    const Rule& rule = rules->rules()[static_cast<std::size_t>(selected_rule_)];
+    ImGui::Separator();
+    ImGui::TextUnformatted(rule.name.c_str());
+    ImGui::SameLine();
+    ImGui::TextDisabled(strings::kRuleIdFormat, rule.id.c_str());
+
+    ImGui::TextDisabled("%s · %s",
+                        rule.type == RuleType::AutoSummary
+                            ? strings::kRuleTypeAutoSummary
+                            : strings::kRuleTypeMatch,
+                        rule.delivery_phase ? strings::kRulePhaseDelivery
+                                            : strings::kRulePhaseSource);
+
+    if (rule.target.source.empty() && rule.target.notifier.empty()) {
+      ImGui::TextDisabled("%s", strings::kRuleTargetGlobal);
+    } else {
+      if (!rule.target.source.empty()) {
+        std::string joined;
+        for (std::size_t i = 0; i < rule.target.source.size(); ++i) {
+          if (i > 0) joined += "  ";
+          joined += rule.target.source[i];
+        }
+        ImGui::TextWrapped(strings::kRuleTargetSourceFormat, joined.c_str());
+      }
+      if (!rule.target.notifier.empty()) {
+        std::string joined;
+        for (std::size_t i = 0; i < rule.target.notifier.size(); ++i) {
+          if (i > 0) joined += "  ";
+          joined += rule.target.notifier[i];
+        }
+        ImGui::TextWrapped(strings::kRuleTargetNotifierFormat, joined.c_str());
+      }
+    }
+
+    if (rule.type == RuleType::AutoSummary) {
+      ImGui::TextDisabled(strings::kRuleFromFormat, rule.auto_from.c_str());
+      ImGui::TextDisabled(strings::kRuleMaxFormat, rule.auto_max_codepoints);
+      if (rule.auto_only_if_empty) {
+        ImGui::TextDisabled("%s", strings::kRuleOnlyIfEmpty);
+      }
+    } else {
+      ImGui::TextWrapped("%s", rule.match_text.empty()
+                                   ? strings::kRuleNoMatch
+                                   : rule.match_text.c_str());
+      if (rule.case_insensitive) {
+        ImGui::TextDisabled("%s", strings::kRuleCaseInsensitive);
+      }
+      if (rule.drop) ImGui::TextColored(kColorBad, "%s", strings::kRuleDrop);
+      if (rule.handle) ImGui::TextDisabled("%s", strings::kRuleHandle);
+      if (rule.has_rewrite()) {
+        if (rule.has_title) {
+          ImGui::TextWrapped(strings::kRuleRewriteTitleFormat,
+                             rule.title_template.c_str());
+        }
+        if (rule.has_content) {
+          ImGui::TextWrapped(strings::kRuleRewriteContentFormat,
+                             rule.content_template.c_str());
+        }
+        if (rule.has_summary) {
+          ImGui::TextWrapped(strings::kRuleRewriteSummaryFormat,
+                             rule.summary_template.c_str());
+        }
+        if (rule.has_level) {
+          ImGui::TextWrapped(strings::kRuleRewriteLevelFormat,
+                             strings::LevelText(rule.level));
+        }
+      } else {
+        ImGui::TextDisabled("%s", strings::kRuleNoRewrite);
+      }
+    }
   }
 }
 

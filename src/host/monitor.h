@@ -2,21 +2,14 @@
 #pragma once
 
 #include <string>
-#include <vector>
 
 #include "platform/window.h"
 
 namespace sm {
 namespace host {
 
-struct MonitorInfo {
-  std::string device;
-  bool primary = false;
-  platform::window::WorkArea full{};
-  platform::window::WorkArea work{};
-};
-
-std::vector<MonitorInfo> EnumerateMonitors();
+using MonitorInfo = platform::window::MonitorInfo;
+using platform::window::EnumerateMonitors;
 
 platform::window::WorkArea ResolveWorkArea(const std::string& name);
 

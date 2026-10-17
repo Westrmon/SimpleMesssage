@@ -71,17 +71,13 @@ class IHostContext {
   // 复制一个字符串到 arena，最多 max_bytes 字节。
   const char* allocate_string(const char* src, std::size_t max_bytes);
 
-  // 三、调度（仅允许在 start() 期间调用）
-  // 宿主在每次调用 start() 之前会清空该插件的下次调度时刻；同一次 start() 里
-  // 重复调用以最后一次为准。
-
   // 相对调度：delay_ms 毫秒之后执行。非正数被忽略并记一条 Warn，不会清零已排的调度。
   virtual void schedule_next(std::int64_t delay_ms) = 0;
 
   // 绝对调度：不早于 unix_ms 执行。
   virtual void schedule_at(std::int64_t unix_ms) = 0;
 
-  // 四、插件设置（任意线程可调用；缺失或类型不符时返回 fallback）
+  // 插件设置（任意线程可调用；缺失或类型不符时返回 fallback）
   virtual bool setting_bool(const char* name, bool fallback) const = 0;
   virtual std::int64_t setting_int(const char* name, std::int64_t fallback) const = 0;
   virtual double setting_double(const char* name, double fallback) const = 0;
@@ -90,25 +86,17 @@ class IHostContext {
   // 枚举型设置返回选项的 value 字符串（不是索引）。
   virtual const char* setting_enum(const char* name, const char* fallback) const = 0;
 
-  // 五、日志（任意线程可调用，线程安全）
-  // 宿主自动为每条日志加上 [时间][级别][插件id][线程] 前缀与换行；
-  // 这两个调用永不阻塞调用方。
   virtual void log(LogLevel level, const char* message) = 0;
 
   // printf 风格。
   virtual void logf(LogLevel level, const char* fmt, ...) = 0;
 
-  // 六、错误上报
-  // 供 StartOutput::error 之外的场合使用（例如 initialize() 失败、看门狗中断后的收尾）。
   virtual void set_error(const char* message) = 0;
 
-  // 七、取消 / 超时（仅允许在 start() 期间调用）
+  // 取消 / 超时（仅允许在 start() 期间调用）
   // 返回 true 表示宿主希望插件尽快放弃本次工作。宿主不会强制终止卡死的插件
   // 代码（做不到，只会让进程更不稳定），只能靠插件自己检查这里。
   virtual bool is_cancelled() const = 0;
-
-  // 八、UI 能力（仅 Notifier 插件；仅允许在宿主回调内调用）
-  // 这些方法只在 on_notify / on_action / draw_ui / draw_view 期间有效。
 
   // 当前这一帧画在哪张表面上的那个 imgui 上下文（实际类型 ImGuiContext*），
   // 无 UI 会话时返回 nullptr。

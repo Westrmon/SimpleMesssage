@@ -9,7 +9,7 @@
 
 #include <windows.h>
 
-#include "host/util.h"
+#include "platform/utf8.h"
 #include "platform/win32/win32_shared.h"
 
 namespace sm {
@@ -27,7 +27,7 @@ std::wstring instance_mutex_name(const char* utf8_identifier) {
   char name[64];
   std::snprintf(name, sizeof(name), "Local\\SimpleMessage.Instance.%016llx",
                 static_cast<unsigned long long>(hash));
-  return util::widen(name);
+  return utf8::widen(name);
 }
 
 class Win32SingleInstanceLock final : public ISingleInstanceLock {

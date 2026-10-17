@@ -22,6 +22,7 @@ inline constexpr const char* kNotifyWindowTitle = "SimpleMessage 通知";
 inline constexpr const char* kPageOverview = "概览";
 inline constexpr const char* kPagePlugins = "插件";
 inline constexpr const char* kPageNotifications = "通知";
+inline constexpr const char* kPageRules = "规则";
 inline constexpr const char* kPageRouting = "路由";
 inline constexpr const char* kPageLog = "日志";
 inline constexpr const char* kPageAbout = "关于";
@@ -88,8 +89,43 @@ inline constexpr const char* kAuthorFormat = "作者：%s";
 inline constexpr const char* kConfigPathFormat = "配置：%s";
 inline constexpr const char* kReEnable = "重新启用";
 inline constexpr const char* kReEnableHint =
-    "会写回 [plugins] 并立即重新加载它的模块；它自己的设置项不受影响。";
+    "会写回 [[instances]] 并立即重新加载它的模块；它自己的设置项不受影响。";
 inline constexpr const char* kResetSettings = "重置为默认值";
+
+// ---- 插件实例 ----
+inline constexpr const char* kAddInstance = "添加实例";
+inline constexpr const char* kAddInstanceTitle = "添加插件实例";
+inline constexpr const char* kAddInstanceTypeLabel = "插件类型";
+inline constexpr const char* kAddInstanceNameLabel = "实例名称（留空则自动命名）";
+inline constexpr const char* kAddInstanceNameHint =
+    "名称只影响界面显示；实例 id 与设置文件由宿主生成，之后不可更改。";
+inline constexpr const char* kAddInstanceCountFormat = "%d 个实例";
+inline constexpr const char* kAddInstanceNoTypes =
+    "没有可用的通知源插件。插件 DLL 必须已通过校验，且实例数未达上限。";
+inline constexpr const char* kAddInstanceReadonly = "配置当前为只读，不能添加实例。";
+inline constexpr const char* kAddInstanceFailedFormat = "添加失败：%s";
+inline constexpr const char* kAddInstanceOkFormat = "已添加实例 %s。";
+inline constexpr const char* kInstanceTypeFormat = "插件类型：%s（%s）";
+inline constexpr const char* kInstanceIdFormat = "实例 id：%s";
+inline constexpr const char* kInstanceOrdinalFormat = "实例序号：%d / %d";
+inline constexpr const char* kInstanceNameLabel = "实例名称";
+inline constexpr const char* kInstanceNameHint =
+    "改名只影响界面显示；实例 id 与设置文件不会改变。";
+inline constexpr const char* kInstanceNone = "这个插件类型当前没有实例。";
+inline constexpr const char* kInstanceAddForType = "为此类型添加实例";
+inline constexpr const char* kInstanceDelete = "删除实例";
+inline constexpr const char* kInstanceDeleteTitle = "删除这个实例？";
+inline constexpr const char* kInstanceDeleteBodyFormat =
+    "将删除实例「%s」（%s）。\n"
+    "设置文件 %s 会被删除且无法恢复；已经产生的通知历史不受影响。";
+inline constexpr const char* kInstanceDeletedFormat = "已删除实例 %s。";
+inline constexpr const char* kInstanceDeleteFailedFormat = "删除失败：%s";
+inline constexpr const char* kInstanceReadonlyHint =
+    "配置当前为只读：添加、删除、改名与启用/禁用都不会写回 config.toml。";
+inline constexpr const char* kInstanceRejectedHint =
+    "这个类型没有通过校验，不能添加实例。请查看上面的原因与日志。";
+inline constexpr const char* kInstanceTypeRowHint =
+    "这是插件类型行，不是运行实例。它没有设置文件。";
 
 inline constexpr const char* kActivityNone = "（还没有活动）";
 inline constexpr const char* kActivityStartFormat = "start() %s · %s";
@@ -177,6 +213,53 @@ inline constexpr const char* kDetailNoAction = "这条通知没有动作。";
 inline constexpr const char* kDetailUnrouted =
     "没有 Notifier 订阅这个 topic，所以点动作没有任何插件会收到（见路由页）。";
 inline constexpr const char* kSelectRowHint = "点列表里的一行看详情。";
+
+// ---- 规则页 ----
+inline constexpr const char* kRulesReadonly =
+    "规则内容只能写在 rules.toml 里；这一页只负责启用/禁用与查看，"
+    "启用状态写回 config.toml 的 [rules]。";
+inline constexpr const char* kRulesReload = "重新加载规则";
+inline constexpr const char* kRulesFileFormat = "规则文件：%s";
+inline constexpr const char* kRulesReloadOkFormat = "已重新加载 %d 条规则。";
+inline constexpr const char* kRulesReloadFailed =
+    "重新加载失败，继续使用上一次的规则集（原因见日志）。";
+inline constexpr const char* kRulesNone = "当前没有规则：rules.toml 为空，或所有规则都被跳过。";
+inline constexpr const char* kRulesSkippedFormat =
+    "有 %d 条规则因配置错误被跳过，详情见启动日志。";
+inline constexpr const char* kRulesCountFormat = "共 %d 条规则";
+inline constexpr const char* kRulesSafeModeHint =
+    "安全模式下不能改动启用状态：本次不会写回 config.toml。";
+inline constexpr const char* kColRuleEnabled = "启用";
+inline constexpr const char* kColRuleIndex = "#";
+inline constexpr const char* kColRuleHits = "命中 / 拦截";
+inline constexpr const char* kColRuleType = "类型";
+inline constexpr const char* kColRulePhase = "阶段";
+inline constexpr const char* kColRuleTarget = "目标";
+inline constexpr const char* kColRuleDetail = "详情";
+inline constexpr const char* kRuleTypeMatch = "match";
+inline constexpr const char* kRuleTypeAutoSummary = "auto_summary";
+inline constexpr const char* kRulePhaseSource = "来源";
+inline constexpr const char* kRulePhaseDelivery = "投递";
+inline constexpr const char* kRuleTargetGlobal = "全局来源";
+inline constexpr const char* kRuleTargetSourceFormat = "source：%s";
+inline constexpr const char* kRuleTargetNotifierFormat = "notifier：%s";
+inline constexpr const char* kRuleStatusEnabled = "启用";
+inline constexpr const char* kRuleStatusDisabled = "禁用";
+inline constexpr const char* kRuleIdFormat = "id：%s";
+inline constexpr const char* kRuleNameFormat = "名称：%s";
+inline constexpr const char* kRuleCaseInsensitive = "忽略大小写";
+inline constexpr const char* kRuleHandle = "匹配后停止（handle = true）";
+inline constexpr const char* kRuleDrop = "丢弃（drop = true）";
+inline constexpr const char* kRuleFromFormat = "简介来源：%s";
+inline constexpr const char* kRuleMaxFormat = "简介最多 %d 个码点";
+inline constexpr const char* kRuleOnlyIfEmpty = "仅当简介为空时生成";
+inline constexpr const char* kRuleNoMatch = "（无条件匹配）";
+inline constexpr const char* kRuleNoRewrite = "（不重写）";
+inline constexpr const char* kRuleNoTarget = "（不限通知源）";
+inline constexpr const char* kRuleRewriteTitleFormat = "title = %s";
+inline constexpr const char* kRuleRewriteContentFormat = "content = %s";
+inline constexpr const char* kRuleRewriteSummaryFormat = "summary = %s";
+inline constexpr const char* kRuleRewriteLevelFormat = "level = %s";
 
 inline constexpr const char* kRoutingTable1 = "Notifier 与它的有效订阅";
 inline constexpr const char* kRoutingTable2 = "最近的 topic 与谁会收到它";

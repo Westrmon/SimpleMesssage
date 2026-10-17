@@ -11,8 +11,6 @@ option(SM_BUILD_TEST_PLUGINS
 option(SM_BUILD_TESTS "构建 SDK 纯函数单元测试（ctest 驱动）" ON)
 
 # Win7 兼容：静态 CRT、禁用现代清单项、把 _WIN32_WINNT 拉回 0x0601。
-# 这不能弥补"现代工具集已不再保证 Win7 目标"的事实 —— 详见
-# docs/01-架构总览.md §6.2。
 option(SM_WIN7_COMPAT "为 Windows 7 SP1 做最佳努力的兼容配置" OFF)
 option(SM_EMBED_CJK_FONT "把中文字体内嵌进宿主而不是从系统加载" OFF)
 set(SM_EMBED_CJK_FONT_FILE "" CACHE FILEPATH

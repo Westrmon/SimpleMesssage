@@ -9,8 +9,17 @@ namespace sm {
 namespace host {
 namespace {
 
+char LowerAscii(char c) {
+  return (c >= 'A' && c <= 'Z') ? static_cast<char>(c + 32) : c;
+}
+
 bool IsWord(const std::string& text, const char* word) {
-  return ::_stricmp(text.c_str(), word) == 0;
+  if (word == nullptr) return false;
+  std::size_t i = 0;
+  for (; i < text.size() && word[i] != '\0'; ++i) {
+    if (LowerAscii(text[i]) != LowerAscii(word[i])) return false;
+  }
+  return i == text.size() && word[i] == '\0';
 }
 
 }  // namespace

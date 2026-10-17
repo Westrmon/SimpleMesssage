@@ -38,8 +38,13 @@ enum class PluginState : std::int32_t {
 const char* PluginStateText(PluginState state);
 
 struct PluginInfo {
+  // 运行时身份：对实例行是实例 id，对类型行（零实例/被拒绝）是类型 id。
   std::string    id;
-  std::string    name;
+  std::string    name;          // 显示名
+  std::string    type_id;
+  std::string    type_name;
+  std::string    custom_name;   // 配置里的 name；空表示自动名
+  std::string    settings_path;
   std::string    version;
   std::string    author;
   std::string    description;
@@ -55,12 +60,38 @@ struct PluginInfo {
   sm::Span<const char*>          subscriptions{};
 
   std::size_t setting_count = 0;
+  std::size_t instance_ordinal = 0;  // 1 起；类型行是 0
+  std::size_t instance_count = 0;    // 该类型当前的实例数
+  bool        is_instance = false;
+  bool        is_rejected_type = false;
+  bool        can_add_instance = false;
+  bool        can_delete_instance = false;
+  bool        pending_removal = false;
 
   std::int64_t last_start_unix_ms = 0;
   sm::StartResult last_start_result = sm::StartResult::Empty;
   bool            last_start_crashed = false;
   std::int64_t    last_notify_unix_ms = 0;
   bool            last_notify_crashed = false;
+};
+
+struct PluginTypeInfo {
+  std::string    type_id;
+  std::string    name;
+  std::string    path;
+  std::string    host_range;
+  sm::PluginKind kind = sm::PluginKind::Source;
+  PluginState    state = PluginState::Discovered;
+  std::string    reason;
+  std::size_t    instance_count = 0;
+  bool           module_loaded = false;
+  bool           can_add_instance = false;
+};
+
+struct AddInstanceResult {
+  bool        ok = false;
+  std::string instance_id;
+  std::string error;
 };
 
 class IPluginEventSink {
@@ -104,6 +135,14 @@ class PluginManager : public IPluginRunner,
 
   void ReleaseDiscoveredModules();
 
+  // 只允许 Source 类型添加实例；Notifier 每种类型仍只有一个 canonical 实例。
+  AddInstanceResult AddInstance(const std::string& type_id,
+                                const std::string& display_name);
+  bool RemoveInstance(const std::string& instance_id,
+                      std::string* out_error = nullptr);
+  bool RenameInstance(const std::string& instance_id,
+                      const std::string& display_name);
+
   bool Enable(const std::string& id);
   bool Disable(const std::string& id);
   bool RetryInitialize(const std::string& id);
@@ -123,6 +162,7 @@ class PluginManager : public IPluginRunner,
   std::size_t PumpMainThread();
 
   std::vector<PluginInfo> Snapshot() const;
+  std::vector<PluginTypeInfo> SnapshotTypes() const;
   std::vector<NotifierSubscriptions> ActiveNotifierSubscriptions() const;
   Stats                   SnapshotStats() const;
   PluginState             StateOf(const std::string& id) const;
@@ -135,6 +175,7 @@ class PluginManager : public IPluginRunner,
   std::size_t main_thread_queue_size() const { return post_queue_.Size(); }
 
  private:
+  struct PluginType;
   struct Record;
 
   struct ValidationResult {
@@ -143,12 +184,20 @@ class PluginManager : public IPluginRunner,
     std::vector<const char*> subscriptions;
   };
 
-  Record* AddRecord(const std::string& id, const std::string& path);
+  PluginType* AddType(const std::string& file_stem, const std::string& path);
+  PluginType* FindType(const std::string& type_id) const;
+  void TryLoadAndValidateType(PluginType& type);
+  ValidationResult Validate(const PluginType& type, const sm::PluginMeta& meta);
+  void RejectType(PluginType& type, const std::string& reason);
+  bool EnsureTypeLoaded(PluginType& type);
+  void UnloadTypeModule(PluginType& type);
+  void MaybeUnloadType(PluginType& type);
+
+  void SynchronizeInstances();
+  Record* AddRecord(const std::string& id, PluginType& type);
   Record* FindRecord(const std::string& id) const;
-  void TryLoadAndValidate(Record& record);
-  ValidationResult Validate(const Record& record, const sm::PluginMeta& meta);
-  PluginHostSetup  MakeHostSetup(const Record& record) const;
-  void RejectRecord(Record& record, const std::string& reason);
+  std::string GenerateInstanceId(const PluginType& type) const;
+  PluginHostSetup MakeHostSetup(const Record& record) const;
 
   void CreateAndInitialize(Record& record);
   bool InitializeInstance(Record& record);
@@ -157,8 +206,9 @@ class PluginManager : public IPluginRunner,
   void CallStop(Record& record);
   void CallExit(Record& record);
   void DestroyInstance(Record& record);
-  void Unload(Record& record);
-  bool FinishTeardown(Record& record);
+  bool FinishTeardown(Record& record);  // 崩溃自动禁用的收尾
+  bool TryFinishRemoval(Record& record);  // 用户删除实例的收尾（成功时记录已被移除）
+  void EraseRecord(Record& record);
 
   void EndCallFailed(const std::string& id, const char* method, const guard::Outcome& outcome);
 
@@ -169,9 +219,11 @@ class PluginManager : public IPluginRunner,
   IPluginActionSink*   actions_ = nullptr;
   IPluginEventSink*    events_ = nullptr;
 
-  std::string                          plugin_dir_;
-  std::vector<std::unique_ptr<Record>> records_;
-  std::map<std::string, Record*>       index_;
+  std::string                              plugin_dir_;
+  std::vector<std::unique_ptr<PluginType>> types_;
+  std::map<std::string, PluginType*>       type_index_;
+  std::vector<std::unique_ptr<Record>>     records_;
+  std::map<std::string, Record*>           index_;
 
   Arena          main_arena_;
   Arena          sched_arena_;

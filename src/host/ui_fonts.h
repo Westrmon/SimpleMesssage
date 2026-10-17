@@ -1,4 +1,4 @@
-// SimpleMessage — 中文字体：回退链、字符集与图集装载
+// SimpleMessage — 中文字体：字符集与图集装载
 #pragma once
 
 #include <string>
@@ -9,9 +9,6 @@ struct ImFontAtlas;
 namespace sm {
 namespace host {
 namespace ui_fonts {
-
-inline constexpr const char* kFallbackChain[] = {"msyh.ttc", "simhei.ttf",
-                                                 "simsun.ttc"};
 
 std::string SystemFontDir();
 

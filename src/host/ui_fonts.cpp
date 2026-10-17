@@ -1,13 +1,11 @@
-// SimpleMessage — 中文字体的实现（回退链 + imgui 图集装载）
+// SimpleMessage — 中文字体的实现（字体目录 + imgui 图集装载）
 #include "host/ui_fonts.h"
-
-#include <windows.h>
-#include <shlobj.h>
 
 #include "imgui.h"
 
 #include "host/log.h"
 #include "host/util.h"
+#include "platform/system.h"
 
 namespace sm {
 namespace host {
@@ -21,19 +19,16 @@ const ImWchar* GlyphRanges(ImFontAtlas* atlas) {
 }  // namespace
 
 std::string SystemFontDir() {
-  wchar_t buffer[MAX_PATH] = {};
-  const HRESULT hr = ::SHGetFolderPathW(nullptr, CSIDL_FONTS, nullptr,
-                                        SHGFP_TYPE_CURRENT, buffer);
-  if (FAILED(hr) || buffer[0] == L'\0') {
+  std::string dir = platform::system_font_directory();
+  if (dir.empty()) {
     sm::log::Write(sm::LogLevel::Warn, "fonts", "取系统字体目录失败，将使用内置字体");
-    return std::string();
   }
-  return util::narrow(buffer);
+  return dir;
 }
 
 std::string ResolveFontFile(const std::string& font_dir) {
   if (font_dir.empty()) return std::string();
-  for (const char* name : kFallbackChain) {
+  for (const std::string& name : platform::preferred_font_files()) {
     const std::string candidate = util::path_join(font_dir, name);
     if (util::file_exists(candidate)) return candidate;
   }
@@ -63,10 +58,14 @@ std::string InstallInto(ImFontAtlas* atlas, float size_px, ImFont** out_font) {
     sm::log::Writef(sm::LogLevel::Error, "fonts", "字体文件无法载入：%s",
                     file.c_str());
   } else {
+    std::string names;
+    for (const std::string& name : platform::preferred_font_files()) {
+      if (!names.empty()) names += " / ";
+      names += name;
+    }
     sm::log::Writef(sm::LogLevel::Error, "fonts",
-                    "回退链上的字体一个都没有（在 %s 下找过 msyh.ttc / simhei.ttf / "
-                    "simsun.ttc）",
-                    dir.empty() ? "?" : dir.c_str());
+                    "回退链上的字体一个都没有（在 %s 下找过 %s）",
+                    dir.empty() ? "?" : dir.c_str(), names.c_str());
   }
 
   ImFont* const fallback = atlas->AddFontDefault(&config);

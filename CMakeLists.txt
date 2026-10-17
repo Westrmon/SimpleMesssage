@@ -1,6 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
 
-# 版本来自 git tag（见 cmake/SmVersion.cmake），必须在 project() 之前确定。
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(SmVersion)
 sm_detect_version("${CMAKE_CURRENT_SOURCE_DIR}")
@@ -10,8 +9,6 @@ project(SimpleMessage
         DESCRIPTION "基于插件机制的通知聚合与投递工具"
         LANGUAGES CXX)
 
-# CMP0091：让 MSVC_RUNTIME_LIBRARY 属性生效（而不是靠改写 CMAKE_CXX_FLAGS）。
-# Win7 兼容模式要切静态 CRT，必须用到它。
 if(POLICY CMP0091)
     cmake_policy(SET CMP0091 NEW)
 endif()

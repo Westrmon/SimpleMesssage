@@ -146,6 +146,7 @@ const char* PanelPageKey(PanelPage page) {
     case PanelPage::Overview:      return "overview";
     case PanelPage::Plugins:       return "plugins";
     case PanelPage::Notifications: return "notifications";
+    case PanelPage::Rules:         return "rules";
     case PanelPage::Routing:       return "routing";
     case PanelPage::Log:           return "log";
     case PanelPage::About:         return "about";

@@ -16,12 +16,13 @@ enum class PanelPage : std::int32_t {
   Overview = 0,
   Plugins = 1,
   Notifications = 2,
-  Routing = 3,
-  Log = 4,
-  About = 5,
+  Rules = 3,
+  Routing = 4,
+  Log = 5,
+  About = 6,
 };
 
-inline constexpr int kPanelPageCount = 6;
+inline constexpr int kPanelPageCount = 7;
 
 const char* PanelPageKey(PanelPage page);
 PanelPage   PanelPageFromKey(const char* key, PanelPage fallback);

@@ -1,11 +1,10 @@
-// SimpleMessage — 托盘图标与右键菜单（外壳的 Win32 那一半）
+// SimpleMessage — 托盘图标与右键菜单（抽象接口）
 #pragma once
 
 #include "sm/notification.h"
 
 namespace sm {
 namespace platform {
-namespace win32 {
 
 struct TrayLabels {
   const char* tooltip = "";
@@ -44,6 +43,5 @@ class ITray {
 
 ITray* create_tray();
 
-}  // namespace win32
 }  // namespace platform
 }  // namespace sm

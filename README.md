@@ -46,7 +46,7 @@ build/Release/sm_host.exe --help          # 全部命令行参数
 | 目录 | 内容 |
 |---|---|
 | `include/sm/` | SDK 公共头。插件作者唯一需要的东西（**接口已冻结**） |
-| `src/platform/` | 平台层：`platform.h` / `window.h` 抽象 + Win32 实现（宿主内部，不属于 SDK） |
+| `src/platform/` | 平台层：`platform.h` / `window.h` / `fs.h` / `system.h` / `console.h` / `dialog.h` / `image.h` / `tray.h` / `entry.h` 等抽象 + Win32 实现（宿主内部，不属于 SDK） |
 | `src/host/` | 宿主实现：日志 / 配置 / 插件管理 / 调度器 / 管线 / 路由 / 内部源 / 窗口层 / UI / 外壳 |
 | `plugins/` | 六个示例插件 |
 | `tests/` | SDK 纯函数单元测试 |

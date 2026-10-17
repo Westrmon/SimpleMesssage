@@ -1,17 +1,4 @@
 // SimpleMessage 示例插件 —— notifier.sound
-//
-// 定位：一个只做一件事的 Notifier —— 通知到达时按级别播放提示音。
-// 它不画任何 UI、不创建窗口、不启动线程；on_notify 里唯一做的事是把一段
-// 声音交给 Windows 的 PlaySound（SND_ASYNC），后者立即返回，播放发生在系统
-// 自己的线程里。这满足 Notifier 的两条硬规则：主线程 + 禁止阻塞。
-//
-// 每档级别可以各自指定：
-//   * 系统声音别名（如 SystemAsterisk / SystemExclamation / SystemHand）；
-//   * 一个 WAV 文件路径（以 .wav 结尾或包含路径分隔符）。
-// 空字符串表示这一档不发声。
-//
-// 平台说明：声音后端目前只有 Windows（winmm）。非 Windows 构建仍可编译，
-// 但会在初始化时记一条 Warn，而不是静默地什么都不做。
 
 #ifndef NOMINMAX
 #define NOMINMAX

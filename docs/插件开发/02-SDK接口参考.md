@@ -449,7 +449,7 @@ using MainThreadTaskFn = void (*)(void* user);
 | `const char* config_dir() const` | 绝对路径 | `config.toml` 与 `plugins/` 下的插件配置在此 |
 | `const char* data_dir() const` | 绝对路径 | **插件自己的状态文件放这里**，不要写进配置目录 |
 | `const char* plugin_dir() const` | 绝对路径 | 插件所在目录 |
-| `const char* own_config_path() const` | 绝对路径 | `config_dir/plugins/<id>.toml`。**插件不应直接读写它** —— 设置走 `setting_*()` |
+| `const char* own_config_path() const` | 绝对路径 | `config_dir/plugins/<实例 id>.toml`（Source 的第二个实例是 `source.email@2.toml`）。**插件不应直接读写它** —— 设置走 `setting_*()`；但它能用来区分“我是哪个实例” |
 | `std::int64_t now_unix_ms() const` | Unix 毫秒 | 等价于通知里的 `time_unix_ms` |
 | `const char* locale() const` | `"zh-CN"` | BCP-47。当前版本恒定返回 `"zh-CN"` |
 
@@ -459,6 +459,12 @@ using MainThreadTaskFn = void (*)(void* user);
 > **为什么 `own_config_path()` 存在却又说"不要用"**：插件写日志或错误信息时
 > 需要引用"你的配置在哪"，主机不可能替它拼这个路径。但**读写**必须走
 > `setting_*()`，否则宿主不知道设置被改了，界面会显示过期的值。
+>
+> **它也是实例级身份。** Source 类型可能同时有多个实例，每次
+> `sm_create_plugin()` 得到的 `own_config_path()` 不同。插件若需要写进
+> `data_dir()` 的实例级状态（缓存、token、队列文件），应从这个路径的
+> 文件名派生（去掉 `.toml` 再做后缀），而**不是**用固定文件名 ——
+> 否则两个实例会互相踩掉对方的状态。`data_dir()` 本身是全局共享目录。
 
 > **`data_dir()` 与 `config_dir()` 为什么分开**：配置目录的内容会被用户
 > 手工编辑、被宿主的"备份并重置"逻辑处理；数据目录不会。插件的缓存、

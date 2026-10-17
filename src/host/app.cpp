@@ -8,17 +8,15 @@
 #include <string>
 #include <vector>
 
-#include <windows.h>
-#include <shellapi.h>
-
 #include "host/log.h"
 #include "host/monitor.h"
 #include "host/strings.h"
 #include "host/ui_root.h"
 #include "host/util.h"
 
+#include "platform/console.h"
 #include "platform/platform.h"
-#include "platform/win32/win32_shared.h"
+#include "platform/system.h"
 
 #include "sm/version.h"
 
@@ -64,92 +62,33 @@ void LogAttachedMonitors() {
 
 constexpr int ExitCodeValue(ExitCode code) { return static_cast<int>(code); }
 
-bool g_console_ready = false;
-
-bool StreamWritable(HANDLE handle) {
-  if (handle == nullptr || handle == INVALID_HANDLE_VALUE) return false;
-  const DWORD type = ::GetFileType(handle);
-  if (type == FILE_TYPE_DISK || type == FILE_TYPE_PIPE) return true;
-  DWORD mode = 0;
-  return ::GetConsoleMode(handle, &mode) != 0;
-}
-
-void PointStdStreamsAtConsole() {
-  FILE* stream = nullptr;
-  ::freopen_s(&stream, "CONOUT$", "w", stdout);
-  ::freopen_s(&stream, "CONOUT$", "w", stderr);
-}
-
-bool EnsureConsoleOutput() {
-  if (g_console_ready) return true;
-  g_console_ready = true;
-
-  if (StreamWritable(::GetStdHandle(STD_OUTPUT_HANDLE))) {
-    ::AttachConsole(ATTACH_PARENT_PROCESS);
-    return true;
-  }
-
-  if (::AttachConsole(ATTACH_PARENT_PROCESS) || ::AllocConsole()) {
-    PointStdStreamsAtConsole();
-    return true;
-  }
-  return false;
-}
-
-void WriteToHandle(HANDLE handle, const char* utf8_text) {
-  if (handle == nullptr || handle == INVALID_HANDLE_VALUE || utf8_text == nullptr) {
-    return;
-  }
-  DWORD written = 0;
-  DWORD mode = 0;
-  if (::GetConsoleMode(handle, &mode)) {
-    const std::wstring wide = util::widen(utf8_text);
-    ::WriteConsoleW(handle, wide.c_str(), static_cast<DWORD>(wide.size()), &written,
-                    nullptr);
-    return;
-  }
-  const std::size_t length = std::strlen(utf8_text);
-  ::WriteFile(handle, utf8_text, static_cast<DWORD>(length), &written, nullptr);
-}
-
-HANDLE OutputHandle(bool is_error) {
-  const DWORD id = is_error ? STD_ERROR_HANDLE : STD_OUTPUT_HANDLE;
-  HANDLE handle = ::GetStdHandle(id);
-  if (!StreamWritable(handle)) {
-    EnsureConsoleOutput();
-    handle = ::GetStdHandle(id);
-  }
-  return handle;
-}
-
 void PrintToStream(bool is_error, const char* utf8_text) {
-
   platform::emit_debug_output(utf8_text);
-  WriteToHandle(OutputHandle(is_error), utf8_text);
+  platform::console::Write(is_error, utf8_text);
 }
 
 void PrintToConsole(const char* utf8_text) { PrintToStream(false, utf8_text); }
 
 void PrintErrorToConsole(const char* utf8_text) { PrintToStream(true, utf8_text); }
 
-bool TakeOptionValue(int argc, wchar_t** argv, int* index, const char* arg,
-                     std::string* out) {
-  const int next = *index + 1;
-  if (next >= argc || argv[next] == nullptr || argv[next][0] == L'-') {
+bool TakeOptionValue(const std::vector<std::string>& args, std::size_t* index,
+                     const char* arg, std::string* out) {
+  const std::size_t next = *index + 1;
+  if (next >= args.size() || (!args[next].empty() && args[next][0] == '-')) {
     char line[128];
     std::snprintf(line, sizeof(line), strings::kMissingValueFormat, arg);
     PrintErrorToConsole(line);
     return false;
   }
   *index = next;
-  *out = util::narrow(argv[next]);
+  *out = args[next];
   return true;
 }
 
 void EchoLine(const char* utf8_line) {
   if (utf8_line == nullptr) return;
   platform::emit_debug_output(utf8_line);
-  if (g_console_ready) WriteToHandle(::GetStdHandle(STD_OUTPUT_HANDLE), utf8_line);
+  if (platform::console::available()) platform::console::Write(false, utf8_line);
 }
 
 bool HasPrefixCI(const char* text, const char* prefix) {
@@ -172,8 +111,8 @@ bool SubscriberAccepts(const Subscriber& subscriber, const std::string& topic) {
   return false;
 }
 
-platform::win32::TrayLabels MakeTrayLabels() {
-  platform::win32::TrayLabels labels;
+platform::TrayLabels MakeTrayLabels() {
+  platform::TrayLabels labels;
   labels.tooltip = strings::kTrayTooltip;
   labels.open_panel = strings::kTrayOpenPanel;
   labels.pause = strings::kTrayPause;
@@ -198,10 +137,10 @@ App::~App() {
   platform::window::Shutdown();
 }
 
-int App::Run(int argc, wchar_t** argv) {
+int App::Run(const std::vector<std::string>& args) {
   started_ms_ = platform::monotonic_ms();
 
-  if (ParseArgs(argc, argv) == ArgsResult::kHandled) return ExitCodeValue(ExitCode::kOk);
+  if (ParseArgs(args) == ArgsResult::kHandled) return ExitCodeValue(ExitCode::kOk);
 
   const ExitCode startup = StartupConfigAndLogging();
   if (startup != ExitCode::kOk) return ExitCodeValue(startup);
@@ -250,10 +189,9 @@ int App::Run(int argc, wchar_t** argv) {
   return ExitCodeValue(ExitCode::kOk);
 }
 
-App::ArgsResult App::ParseArgs(int argc, wchar_t** argv) {
-  for (int i = 1; i < argc && argv != nullptr; ++i) {
-    if (argv[i] == nullptr) continue;
-    const std::string arg = util::narrow(argv[i]);
+App::ArgsResult App::ParseArgs(const std::vector<std::string>& args) {
+  for (std::size_t i = 1; i < args.size(); ++i) {
+    const std::string& arg = args[i];
 
     if (arg == "--help" || arg == "-h") {
       PrintToConsole(strings::kUsageText);
@@ -277,7 +215,7 @@ App::ArgsResult App::ParseArgs(int argc, wchar_t** argv) {
     if (arg == "--config-dir" || arg == "--data-dir" || arg == "--plugin-dir" ||
         arg == "--renderer") {
       std::string value;
-      if (!TakeOptionValue(argc, argv, &i, arg.c_str(), &value)) continue;
+      if (!TakeOptionValue(args, &i, arg.c_str(), &value)) continue;
 
       if (arg == "--config-dir") {
         config_dir_arg_ = value;
@@ -303,7 +241,7 @@ App::ArgsResult App::ParseArgs(int argc, wchar_t** argv) {
 ExitCode App::StartupConfigAndLogging() {
 
   if (console_) {
-    if (EnsureConsoleOutput()) {
+    if (platform::console::EnsureOutput()) {
       sm::log::SetEchoSink(&EchoLine);
     } else {
       sm::log::Write(sm::LogLevel::Warn, "host",
@@ -337,6 +275,8 @@ ExitCode App::StartupConfigAndLogging() {
                      app.log_max_total_mb);
   sm::log::SetMinLevel(app.log_level);
 
+  LoadRules(false);
+
   std::string error;
   ui_state_load_ = LoadUiState(UiStatePath(paths_), &ui_state_, &error);
   if (ui_state_load_ == UiStateLoad::Corrupt) {
@@ -345,6 +285,82 @@ ExitCode App::StartupConfigAndLogging() {
   }
 
   return ExitCode::kOk;
+}
+
+bool App::LoadRules(bool reload) {
+  const std::string& path = paths_.rules_file;
+  std::string        text;
+
+  if (!util::file_exists(path)) {
+    text = DefaultRulesFileText();
+    if (safe_mode_) {
+      sm::log::Writef(sm::LogLevel::Info, "rules",
+                      "规则文件不存在（安全模式不落盘），本次使用内存中的默认规则：%s",
+                      path.c_str());
+    } else {
+      std::string error;
+      if (util::write_text_file_atomically(path, text, &error)) {
+        sm::log::Writef(sm::LogLevel::Info, "rules",
+                        "规则文件不存在，已生成默认模板：%s", path.c_str());
+      } else {
+        sm::log::Writef(sm::LogLevel::Warn, "rules",
+                        "规则文件不存在且无法写入默认模板（%s），本次使用内存中的默认规则",
+                        error.c_str());
+      }
+    }
+  } else if (!util::read_text_file(path, &text)) {
+    sm::log::Writef(sm::LogLevel::Error, "rules", "规则文件无法读取：%s",
+                    path.c_str());
+    if (!reload) {
+      rules_ = std::make_shared<RuleSet>();
+      pipeline_.SetRules(rules_);
+    }
+    return false;
+  }
+
+  RuleDiagnostics diagnostics;
+  bool            parse_failed = false;
+  std::shared_ptr<RuleSet> parsed =
+      RuleSet::Parse(text, path, config_.Data().rules, &diagnostics,
+                     &parse_failed);
+
+  for (const RuleDiagnostic& diagnostic : diagnostics) {
+    const sm::LogLevel level =
+        diagnostic.severity == RuleDiagnostic::Severity::Error
+            ? sm::LogLevel::Error
+            : (diagnostic.severity == RuleDiagnostic::Severity::Warn
+                   ? sm::LogLevel::Warn
+                   : sm::LogLevel::Info);
+    sm::log::Write(level, "rules", diagnostic.message.c_str());
+  }
+
+  if (parse_failed) {
+    if (reload) {
+      sm::log::Write(sm::LogLevel::Error, "rules",
+                     "规则重载失败，继续使用上一次的规则集");
+      return false;
+    }
+    sm::log::Write(sm::LogLevel::Error, "rules",
+                   "规则文件不可用，本次不加载任何规则");
+  }
+
+  rules_ = std::move(parsed);
+  pipeline_.SetRules(rules_);
+  sm::log::Writef(sm::LogLevel::Info, "rules", "已加载 %zu 条规则，跳过 %zu 条",
+                  rules_->size(), rules_->skipped());
+  return !parse_failed;
+}
+
+std::shared_ptr<RuleSet> App::rules_snapshot() const { return rules_; }
+
+bool App::ReloadRules() { return LoadRules(true); }
+
+void App::SetRuleEnabled(const std::string& id, bool enabled) {
+  if (safe_mode_) return;
+  config_.SetRuleEnabled(id, enabled);
+  if (rules_ != nullptr) rules_->SetEnabledById(id, enabled);
+  sm::log::Writef(sm::LogLevel::Debug, "rules", "规则 %s 已%s", id.c_str(),
+                  enabled ? "启用" : "禁用");
 }
 
 bool App::AcquireSingleInstance() {
@@ -372,7 +388,8 @@ bool App::InitPlatform() {
 
   LogAttachedMonitors();
 
-  if (!messages_.Create(&App::MessageWindowThunk, this)) {
+  messages_.reset(platform::NewMessageWindow());
+  if (!messages_ || !messages_->Create(&App::SystemEventThunk, this)) {
     return false;
   }
 
@@ -398,7 +415,7 @@ bool App::InitPlatform() {
 
   window_->SetRect(ui_state_.x, ui_state_.y, ui_state_.w, ui_state_.h);
 
-  tray_ = platform::win32::create_tray();
+  tray_ = platform::create_tray();
   if (tray_ == nullptr || !tray_->Create(MakeTrayLabels(), this)) {
     delete tray_;
     tray_ = nullptr;
@@ -928,30 +945,23 @@ void App::NotifyCloseRequestThunk(void* user) {
   static_cast<App*>(user)->HandleNotifyCloseRequest();
 }
 
-bool App::HandleMessageWindowMessage(HWND , UINT message, WPARAM wparam,
-                                     LPARAM ) {
-  if (message == platform::win32::kWakeMessage) {
-    OpenPanel();
-    return true;
+bool App::HandleSystemEvent(const platform::SystemEvent& event) {
+  switch (event.kind) {
+    case platform::SystemEventKind::kWake:
+      OpenPanel();
+      return true;
+    case platform::SystemEventKind::kSessionQueryEnd:
+      sm::log::Write(sm::LogLevel::Info, "host", "系统正在关机或注销，准备退出");
+      return false;
+    case platform::SystemEventKind::kSessionEnd:
+      if (event.ending) RequestExit();
+      return false;
   }
-
-  if (message == WM_QUERYENDSESSION) {
-    sm::log::Write(sm::LogLevel::Info, "host", "系统正在关机或注销，准备退出");
-    return false;
-  }
-
-  if (message == WM_ENDSESSION) {
-    if (wparam != 0) RequestExit();
-    return false;
-  }
-
   return false;
 }
 
-bool App::MessageWindowThunk(void* user, HWND hwnd, UINT message, WPARAM wparam,
-                             LPARAM lparam) {
-  return static_cast<App*>(user)->HandleMessageWindowMessage(hwnd, message, wparam,
-                                                             lparam);
+bool App::SystemEventThunk(void* user, const platform::SystemEvent& event) {
+  return static_cast<App*>(user)->HandleSystemEvent(event);
 }
 
 void App::Shutdown() {
@@ -996,7 +1006,7 @@ void App::Shutdown() {
   }
   notify_window_.reset();
   window_.reset();
-  messages_.Destroy();
+  if (messages_) messages_->Destroy();
   platform::window::Shutdown();
 
   sm::log::Write(sm::LogLevel::Info, "host", "SimpleMessage 已退出");
@@ -1075,11 +1085,7 @@ void App::UpdateTrayLevel() {
 
 bool App::ShellOpen(const std::string& utf8_target) const {
   if (utf8_target.empty()) return false;
-
-  const std::wstring target = util::widen(utf8_target.c_str());
-  const HINSTANCE result = ::ShellExecuteW(nullptr, L"open", target.c_str(), nullptr,
-                                           nullptr, SW_SHOWNORMAL);
-  return reinterpret_cast<std::intptr_t>(result) > 32;
+  return platform::shell_open(utf8_target.c_str());
 }
 
 const char* App::log_file_path() const {

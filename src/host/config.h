@@ -19,6 +19,7 @@ struct Paths {
   std::string data_dir;
   std::string plugin_dir;
   std::string config_file;
+  std::string rules_file;
   std::string plugin_config_dir;
   std::string log_dir;
   std::string host_dir;
@@ -77,11 +78,25 @@ struct NotifyWindowConfig {
 using PluginEnabledMap = std::map<std::string, bool>;
 using RoutingMap = std::map<std::string, std::vector<std::string>>;
 
+// 一条 `[[instances]]` 记录。id 由宿主生成且不可改；plugin 是插件类型 id；
+// name 为空表示使用自动显示名；enabled 是用户的启用/禁用选择。
+struct InstanceConfig {
+  std::string id;
+  std::string plugin;
+  std::string name;
+  bool        enabled = true;
+};
+
 struct Config {
   AppConfig          app;
   NotifyWindowConfig notify_window;
-  PluginEnabledMap   plugins;
-  RoutingMap         routing;
+  // 每个插件的运行实例。Notifier 每种类型仍只有一个 canonical 实例。
+  std::vector<InstanceConfig> instances;
+  // 被用户删空的类型。存在墓碑时不再自动补 canonical 实例。
+  std::vector<std::string> removed_types;
+  // rules.toml 里每条规则的启用覆盖：表里没有的 id 默认启用。
+  PluginEnabledMap rules;
+  RoutingMap       routing;
 };
 
 class ConfigStore;
@@ -146,7 +161,11 @@ class PluginSettings {
 
 class ConfigStore {
  public:
-  static constexpr std::int32_t kSchemaVersion = 1;
+  // config.toml 的结构版本。
+  static constexpr std::int32_t kSchemaVersion = 2;
+  // config/plugins/<id>.toml 的结构版本。它与 config.toml 独立演进 ——
+  // 两者共用同一个常量会让配置升级把所有既有设置文件误判为旧版本。
+  static constexpr std::int32_t kSettingsSchemaVersion = 1;
 
   ConfigStore();
   ~ConfigStore();
@@ -169,7 +188,25 @@ class ConfigStore {
 
   bool config_was_reset() const { return config_reset_; }
 
-  void SetPluginEnabled(const std::string& plugin_id, bool enabled);
+  const std::vector<InstanceConfig>& Instances() const { return config_.instances; }
+  const InstanceConfig* FindInstance(const std::string& instance_id) const;
+  std::size_t CountInstancesOfType(const std::string& type_id) const;
+
+  bool AddInstance(InstanceConfig instance, Diagnostics* out);
+  bool RemoveInstance(const std::string& instance_id, Diagnostics* out);
+  bool SetInstanceEnabled(const std::string& instance_id, bool enabled);
+  bool SetInstanceName(const std::string& instance_id, const std::string& name);
+
+  bool IsTypeRemoved(const std::string& type_id) const;
+  void MarkTypeRemoved(const std::string& type_id);
+  void ClearTypeRemoved(const std::string& type_id);
+
+  // 只丢弃内存里的设置对象；调用前必须确保插件的 PluginHost 已销毁。
+  void ForgetPluginSettings(const std::string& instance_id);
+  // 删除 <instance_id>.toml 与 .bak。失败只记诊断，不重建文件。
+  bool DeletePluginSettingsFiles(const std::string& instance_id, Diagnostics* out);
+
+  void SetRuleEnabled(const std::string& rule_id, bool enabled);
   void SetRouting(const std::string& plugin_id, std::vector<std::string> patterns);
   void SetLogLevel(sm::LogLevel level);
   void SetNotifyLogLevel(NotifyLogLevel level);

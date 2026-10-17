@@ -7,6 +7,7 @@
 #include <map>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "sm/notification.h"
@@ -14,6 +15,7 @@
 
 #include "host/plugin_host.h"
 #include "host/router.h"
+#include "host/rules.h"
 
 namespace sm {
 namespace host {
@@ -62,6 +64,11 @@ class NotificationPipeline final : public INotificationSink {
   void SetRouter(const Router* router);
   void SetDelivery(INotifierDelivery* delivery);
 
+  // 规则集可以在运行中替换：来源线程的 Admit 与主线程的 Pump 都只抓一份
+  // snapshot（shared_ptr），因此重载不会和正在处理的通知竞争。
+  void SetRules(std::shared_ptr<RuleSet> rules);
+  std::shared_ptr<RuleSet> RulesSnapshot() const;
+
   void OnNotifications(const std::string& source_plugin_id,
                        sm::Span<const sm::Notification> items) override;
 
@@ -73,6 +80,9 @@ class NotificationPipeline final : public INotificationSink {
     std::int64_t rejected = 0;
     std::int64_t dropped = 0;
     std::int64_t undelivered = 0;
+    // 被规则过滤：来源趟（通知根本没进历史）与投递趟（该 Notifier 收不到）。
+    std::int64_t filtered_source = 0;
+    std::int64_t filtered_delivery = 0;
   };
 
   Stats       SnapshotStats() const;
@@ -99,9 +109,13 @@ class NotificationPipeline final : public INotificationSink {
   void TrimHistoryLocked();
 
   mutable std::mutex mutex_;
+  mutable std::mutex rules_mutex_;
+  std::shared_ptr<RuleSet> rules_;
   std::deque<OwnedNotification> queue_;
   std::deque<OwnedNotification> history_;
-  std::map<std::string, OwnedNotification*> by_id_;
+  // 键是（来源实例 id, 通知 id）：多个实例可能上报相同的通知 id（例如两个
+  // Gotify 应用的消息号），不能互相覆盖。
+  std::map<std::pair<std::string, std::string>, OwnedNotification*> by_id_;
 
   std::int64_t next_seq_ = 1;
   std::int64_t dropped_since_report_ = 0;

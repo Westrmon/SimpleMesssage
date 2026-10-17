@@ -1,12 +1,30 @@
 // SimpleMessage — 控制面板的骨架：横幅、页签、引用与关闭语义、确认弹窗
 #include "host/ui_panel.h"
 
+#include <cstdarg>
+#include <cstdio>
+#include <string>
+#include <vector>
+
 #include "imgui.h"
 
 #include "host/strings.h"
 
 namespace sm {
 namespace host {
+
+namespace {
+
+std::string Fmt(const char* format, ...) {
+  char buffer[1024];
+  va_list args;
+  va_start(args, format);
+  std::vsnprintf(buffer, sizeof(buffer), format, args);
+  va_end(args);
+  return std::string(buffer);
+}
+
+}  // namespace
 
 void LogConfigDiagnostics(const config::Diagnostics& diagnostics) {
   for (const config::Diagnostic& d : diagnostics) {
@@ -87,7 +105,18 @@ void UiPanel::Draw() {
 }
 
 bool UiPanel::modal_active() const {
-  return clear_history_pending_ || reset_settings_pending_;
+  return clear_history_pending_ || reset_settings_pending_ || add_instance_pending_ ||
+         delete_instance_pending_ ||
+         ImGui::IsPopupOpen(strings::kAddInstanceTitle) ||
+         ImGui::IsPopupOpen(strings::kInstanceDeleteTitle);
+}
+
+void UiPanel::OpenAddInstancePopup(const std::string& type_id) {
+  add_instance_type_ = type_id;
+  add_instance_name_.clear();
+  add_instance_error_.clear();
+  add_instance_name_state_ = TextInputState{};
+  add_instance_pending_ = true;
 }
 
 void UiPanel::DrawBanners() {
@@ -124,7 +153,8 @@ void UiPanel::DrawTabBar() {
 
   static const char* const kNames[kPanelPageCount] = {
       strings::kPageOverview, strings::kPagePlugins, strings::kPageNotifications,
-      strings::kPageRouting, strings::kPageLog,     strings::kPageAbout,
+      strings::kPageRules,    strings::kPageRouting, strings::kPageLog,
+      strings::kPageAbout,
   };
 
   for (int i = 0; i < kPanelPageCount; ++i) {
@@ -149,6 +179,7 @@ void UiPanel::DrawFixedPage(PanelPage target) {
     case PanelPage::Overview:      DrawOverviewPage(); break;
     case PanelPage::Plugins:       DrawPluginsPage(); break;
     case PanelPage::Notifications: DrawNotificationsPage(); break;
+    case PanelPage::Rules:         DrawRulesPage(); break;
     case PanelPage::Routing:       DrawRoutingPage(); break;
     case PanelPage::Log:           DrawLogPage(); break;
     case PanelPage::About:         DrawAboutPage(); break;
@@ -195,6 +226,134 @@ void UiPanel::DrawConfirmPopups() {
     }
     ImGui::SameLine();
     if (ImGui::Button(strings::kCancel)) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+  }
+
+  DrawInstancePopups();
+}
+
+void UiPanel::DrawInstancePopups() {
+  if (setup_.plugins == nullptr) return;
+
+  if (add_instance_pending_) {
+    ImGui::OpenPopup(strings::kAddInstanceTitle);
+    add_instance_pending_ = false;
+  }
+  if (delete_instance_pending_) {
+    ImGui::OpenPopup(strings::kInstanceDeleteTitle);
+    delete_instance_pending_ = false;
+  }
+
+  const bool readonly = setup_.config == nullptr || setup_.config->read_only() ||
+                        setup_.config->SchemaTooNewDetected();
+
+  if (ImGui::BeginPopupModal(strings::kAddInstanceTitle, nullptr,
+                             ImGuiWindowFlags_AlwaysAutoResize)) {
+    std::vector<PluginTypeInfo> types = setup_.plugins->SnapshotTypes();
+    std::vector<const PluginTypeInfo*> candidates;
+    for (const PluginTypeInfo& type : types) {
+      if (type.kind == sm::PluginKind::Source && type.can_add_instance) {
+        candidates.push_back(&type);
+      }
+    }
+
+    if (readonly) {
+      ImGui::TextWrapped("%s", strings::kAddInstanceReadonly);
+    } else if (candidates.empty()) {
+      ImGui::TextWrapped("%s", strings::kAddInstanceNoTypes);
+    } else {
+      ImGui::TextUnformatted(strings::kAddInstanceTypeLabel);
+      for (const PluginTypeInfo* type : candidates) {
+        ImGui::PushID(type->type_id.c_str());
+        const std::string label =
+            Fmt("%s  ·  %s  ·  %s", type->name.c_str(), type->type_id.c_str(),
+                Fmt(strings::kAddInstanceCountFormat,
+                    static_cast<int>(type->instance_count)).c_str());
+        const bool selected = (add_instance_type_ == type->type_id);
+        if (ImGui::Selectable(label.c_str(), selected)) {
+          add_instance_type_ = type->type_id;
+          add_instance_error_.clear();
+        }
+        ImGui::PopID();
+      }
+
+      ImGui::Separator();
+      ImGui::TextUnformatted(strings::kAddInstanceNameLabel);
+      InputTextStdString("##add_instance_name", "add-instance-name",
+                         &add_instance_name_, 96, &add_instance_name_state_);
+      ImGui::TextDisabled("%s", strings::kAddInstanceNameHint);
+    }
+
+    if (!add_instance_error_.empty()) {
+      ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.40f, 1.0f));
+      ImGui::TextWrapped("%s", add_instance_error_.c_str());
+      ImGui::PopStyleColor();
+    }
+
+    ImGui::Separator();
+    const bool can_confirm = !readonly && !add_instance_type_.empty();
+    if (!can_confirm) ImGui::BeginDisabled();
+    if (ImGui::Button(strings::kConfirm)) {
+      const AddInstanceResult result =
+          setup_.plugins->AddInstance(add_instance_type_, add_instance_name_);
+      if (result.ok) {
+        expanded_plugin_ = result.instance_id;
+        scroll_to_plugin_ = result.instance_id;
+        status_message_ = Fmt(strings::kAddInstanceOkFormat, result.instance_id.c_str());
+        add_instance_type_.clear();
+        add_instance_name_.clear();
+        add_instance_error_.clear();
+        add_instance_name_state_ = TextInputState{};
+        ImGui::CloseCurrentPopup();
+      } else {
+        add_instance_error_ =
+            Fmt(strings::kAddInstanceFailedFormat, result.error.c_str());
+      }
+    }
+    if (!can_confirm) ImGui::EndDisabled();
+
+    ImGui::SameLine();
+    if (ImGui::Button(strings::kCancel)) {
+      add_instance_error_.clear();
+      ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+  }
+
+  if (ImGui::BeginPopupModal(strings::kInstanceDeleteTitle, nullptr,
+                             ImGuiWindowFlags_AlwaysAutoResize)) {
+    ImGui::TextWrapped(strings::kInstanceDeleteBodyFormat, delete_instance_name_.c_str(),
+                       delete_instance_id_.c_str(), delete_instance_path_.c_str());
+    if (!delete_instance_error_.empty()) {
+      ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.40f, 1.0f));
+      ImGui::TextWrapped("%s", delete_instance_error_.c_str());
+      ImGui::PopStyleColor();
+    }
+    ImGui::Separator();
+
+    if (readonly) ImGui::BeginDisabled();
+    if (ImGui::Button(strings::kConfirm)) {
+      std::string error;
+      if (setup_.plugins->RemoveInstance(delete_instance_id_, &error)) {
+        if (expanded_plugin_ == delete_instance_id_) expanded_plugin_.clear();
+        if (scroll_to_plugin_ == delete_instance_id_) scroll_to_plugin_.clear();
+        status_message_ =
+            Fmt(strings::kInstanceDeletedFormat, delete_instance_id_.c_str());
+        delete_instance_error_.clear();
+        ImGui::CloseCurrentPopup();
+      } else {
+        delete_instance_error_ =
+            Fmt(strings::kInstanceDeleteFailedFormat,
+                error.empty() ? "未知原因" : error.c_str());
+      }
+    }
+    if (readonly) ImGui::EndDisabled();
+
+    ImGui::SameLine();
+    if (ImGui::Button(strings::kCancel)) {
+      delete_instance_error_.clear();
+      ImGui::CloseCurrentPopup();
+    }
     ImGui::EndPopup();
   }
 }

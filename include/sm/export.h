@@ -21,10 +21,6 @@
   SM_PLUGIN_EXPORT sm::IPlugin* sm_create_plugin(sm::IHostContext* host);  \
   SM_PLUGIN_EXPORT void sm_destroy_plugin(sm::IPlugin* plugin);
 
-// SM_DEFINE_PLUGIN — 生成全部四个导出符号。
-// MetaSymbol 必须是静态存储期的 PluginMeta，PluginClass 必须可被 new PluginClass(host) 构造；
-// 必须在全局作用域使用（extern "C" 符号不能在 namespace 里）。
-// 用法见 docs/插件开发/02-SDK接口参考.md §8.4。
 #define SM_DEFINE_PLUGIN(MetaSymbol, PluginClass)                             \
   SM_PLUGIN_EXPORT std::int32_t sm_abi_version() {                            \
     return SM_API_VERSION;                                                    \

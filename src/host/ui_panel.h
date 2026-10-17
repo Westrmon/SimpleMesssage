@@ -2,6 +2,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -38,6 +39,12 @@ class IPanelHost {
   virtual void RequestExit() = 0;
   virtual void NotifyCloseHint() = 0;
   virtual void CurrentWindowRect(int* x, int* y, int* w, int* h) const = 0;
+
+  // 规则页：只读快照 + 两个动作。宿主保证返回的 RuleSet 与管线正在用的
+  // 是同一个实例，因此这里的启用开关会立即生效。
+  virtual std::shared_ptr<RuleSet> rules_snapshot() const = 0;
+  virtual bool ReloadRules() = 0;
+  virtual void SetRuleEnabled(const std::string& id, bool enabled) = 0;
 };
 
 struct UiPanelSetup {
@@ -76,6 +83,7 @@ class UiPanel {
   void DrawOverviewPage();
   void DrawPluginsPage();
   void DrawNotificationsPage();
+  void DrawRulesPage();
   void DrawRoutingPage();
   void DrawLogPage();
   void DrawAboutPage();
@@ -84,6 +92,8 @@ class UiPanel {
   void DrawBanners();
   void DrawTabBar();
   void DrawConfirmPopups();
+  void DrawInstancePopups();
+  void OpenAddInstancePopup(const std::string& type_id);
 
   void GoToPluginPage(const std::string& plugin_id);
   void OnLogSnapshot();
@@ -94,6 +104,8 @@ class UiPanel {
   UiState*     state_ = nullptr;
 
   std::int64_t selected_seq_ = 0;
+  int          selected_rule_ = -1;
+  std::string  rules_status_;
   std::string        expanded_plugin_;
   std::string        scroll_to_plugin_;
   bool               pending_tab_select_ = false;
@@ -101,6 +113,8 @@ class UiPanel {
   TextInputState     notify_topic_state_;
   TextInputState     notify_text_state_;
   TextInputState     log_text_state_;
+  TextInputState     instance_name_state_;
+  TextInputState     add_instance_name_state_;
   static constexpr std::size_t kLogSnapshotMax = 256;
   std::vector<log::Entry> log_entries_;
   std::uint64_t           log_version_ = 0;
@@ -112,6 +126,18 @@ class UiPanel {
   bool        clear_history_pending_ = false;
   bool        reset_settings_pending_ = false;
   std::string reset_settings_plugin_;
+
+  bool        add_instance_pending_ = false;
+  std::string add_instance_type_;
+  std::string add_instance_name_;
+  std::string add_instance_error_;
+
+  bool        delete_instance_pending_ = false;
+  std::string delete_instance_id_;
+  std::string delete_instance_name_;
+  std::string delete_instance_path_;
+  std::string delete_instance_error_;
+
   std::string status_message_;
   static constexpr std::int64_t kMonitorsCacheMs = 1000;
   std::vector<MonitorInfo> monitors_;
