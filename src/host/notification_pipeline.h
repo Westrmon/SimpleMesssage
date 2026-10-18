@@ -1,6 +1,7 @@
 // SimpleMessage — 通知管线：入队、清洗、去重、背压、历史、路由投递
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -19,6 +20,8 @@
 
 namespace sm {
 namespace host {
+
+class RuleSaveSink;
 
 struct PipelineLimits {
   std::size_t  queue_capacity = sm::limits::kNotificationQueueCapacity;
@@ -64,6 +67,11 @@ class NotificationPipeline final : public INotificationSink {
   void SetRouter(const Router* router);
   void SetDelivery(INotifierDelivery* delivery);
 
+  // sink 的生命周期必须覆盖管线；开关可以在运行中切换（UI 线程写，
+  // 来源线程与主线程读）。
+  void SetRuleSaveSink(RuleSaveSink* sink);
+  void SetRuleSaveEnabled(bool enabled);
+
   // 规则集可以在运行中替换：来源线程的 Admit 与主线程的 Pump 都只抓一份
   // snapshot（shared_ptr），因此重载不会和正在处理的通知竞争。
   void SetRules(std::shared_ptr<RuleSet> rules);
@@ -104,6 +112,11 @@ class NotificationPipeline final : public INotificationSink {
  private:
   bool Admit(const std::string& source_plugin, const sm::Notification& src);
 
+  // 用命中快照覆盖视图字段后交给 sink；调用前需确认开关已打开。
+  void SaveRuleHit(const RuleSet& rules, const OwnedNotification& n,
+                   const RuleSaveHit& hit, bool delivery_phase,
+                   const std::string& notifier_id);
+
   void DropOldestLocked();
   void ReportDropsLocked();
   void TrimHistoryLocked();
@@ -125,6 +138,8 @@ class NotificationPipeline final : public INotificationSink {
   PipelineLimits    limits_;
   const Router*     router_ = nullptr;
   INotifierDelivery* delivery_ = nullptr;
+  RuleSaveSink*     rule_save_ = nullptr;
+  std::atomic<bool> rule_save_enabled_{false};
   bool              warned_no_delivery_ = false;
 };
 

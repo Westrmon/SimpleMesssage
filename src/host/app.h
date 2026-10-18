@@ -14,6 +14,7 @@
 #include "host/plugin_manager.h"
 #include "host/render_backend.h"
 #include "host/router.h"
+#include "host/rule_save.h"
 #include "host/scheduler.h"
 #include "host/ui_panel.h"
 #include "host/ui_session.h"
@@ -166,6 +167,7 @@ class App final : public IPanelHost,
   config::ConfigStore config_;
 
   Router               router_;
+  RuleSaveSink         rule_save_;
   NotificationPipeline pipeline_;
   std::shared_ptr<RuleSet> rules_;
   ActionDispatcher     actions_;

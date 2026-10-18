@@ -162,6 +162,11 @@ inline constexpr const char* kSettingsUnavailableFormat =
     "插件当前没有加载（%s），设置表单要等它重新启用之后才能生成。";
 inline constexpr const char* kSettingSchemaTooNew =
     "这个插件的设置文件版本高于本宿主，界面不会写回它 —— 手工编辑也请谨慎。";
+inline constexpr const char* kSettingBrowse = "浏览…";
+inline constexpr const char* kSettingPreview = "试听";
+inline constexpr const char* kSettingSoundFilter = "WAV / MP3 文件 (*.wav;*.mp3)";
+inline constexpr const char* kSettingAllFilesFilter = "所有文件 (*.*)";
+inline constexpr const char* kSettingPreviewFailedTitle = "无法试听";
 
 inline constexpr const char* kColTime = "时间";
 inline constexpr const char* kColLevel = "级别";
@@ -193,6 +198,12 @@ inline constexpr const char* kNotifySurfaceHint =
     "config.toml 的 [notify_window]。";
 inline constexpr const char* kNotifyMonitorMissingHint =
     "配置里的这块屏幕现在不在系统里 —— 通知会临时弹在主屏上，插回显示器即恢复。";
+
+inline constexpr const char* kSecRuleSave = "规则保存";
+inline constexpr const char* kAllowRuleSave = "允许规则保存通知内容";
+inline constexpr const char* kAllowRuleSaveHint =
+    "关闭时所有规则的 save 都不生效；开启后无视通知来源，命中的规则会立即把"
+    "通知追加写入文件。配置写回 config.toml 的 [app] allow_rule_save。";
 
 inline constexpr const char* kHistoryEmpty = "内存历史里还没有通知。";
 inline constexpr const char* kHistoryCleared = "历史已清空（seq 不重置）。";
@@ -251,7 +262,7 @@ inline constexpr const char* kRuleCaseInsensitive = "忽略大小写";
 inline constexpr const char* kRuleHandle = "匹配后停止（handle = true）";
 inline constexpr const char* kRuleDrop = "丢弃（drop = true）";
 inline constexpr const char* kRuleFromFormat = "简介来源：%s";
-inline constexpr const char* kRuleMaxFormat = "简介最多 %d 个码点";
+inline constexpr const char* kRuleMaxFormat = "简介最多 %zu 个码点";
 inline constexpr const char* kRuleOnlyIfEmpty = "仅当简介为空时生成";
 inline constexpr const char* kRuleNoMatch = "（无条件匹配）";
 inline constexpr const char* kRuleNoRewrite = "（不重写）";
@@ -260,6 +271,13 @@ inline constexpr const char* kRuleRewriteTitleFormat = "title = %s";
 inline constexpr const char* kRuleRewriteContentFormat = "content = %s";
 inline constexpr const char* kRuleRewriteSummaryFormat = "summary = %s";
 inline constexpr const char* kRuleRewriteLevelFormat = "level = %s";
+inline constexpr const char* kRuleSaveEnabled = "保存：已启用";
+inline constexpr const char* kRuleSaveDisabled = "保存：未启用";
+inline constexpr const char* kRuleSaveDefaultPath =
+    "保存路径：默认（notify/{ruleid}.txt，相对 data_dir）";
+inline constexpr const char* kRuleSavePathFormat = "保存路径：%s";
+inline constexpr const char* kRuleSaveGlobalOff =
+    "通知页尚未允许规则保存，当前不会写入。";
 
 inline constexpr const char* kRoutingTable1 = "Notifier 与它的有效订阅";
 inline constexpr const char* kRoutingTable2 = "最近的 topic 与谁会收到它";

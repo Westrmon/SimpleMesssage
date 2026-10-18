@@ -711,7 +711,7 @@ PluginManager::ValidationResult PluginManager::Validate(const PluginType& type,
 
     const std::int32_t type_value = static_cast<std::int32_t>(def.type);
     if (type_value < static_cast<std::int32_t>(sm::SettingType::Bool) ||
-        type_value > static_cast<std::int32_t>(sm::SettingType::Enum)) {
+        type_value > static_cast<std::int32_t>(sm::SettingType::Sound)) {
       return {false, Fmt("第 %zu 个设置项的 type 非法（%d）", ordinal, type_value), {}};
     }
     if (def.type == sm::SettingType::Enum) {

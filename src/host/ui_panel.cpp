@@ -24,6 +24,14 @@ std::string Fmt(const char* format, ...) {
   return std::string(buffer);
 }
 
+bool BeginConstrainedModal(const char* title) {
+  const ImGuiViewport* const viewport = ImGui::GetMainViewport();
+  ImGui::SetNextWindowSizeConstraints(
+      ImVec2(420.0f, 0.0f),
+      ImVec2(viewport->WorkSize.x * 0.85f, viewport->WorkSize.y * 0.85f));
+  return ImGui::BeginPopupModal(title, nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+}
+
 }  // namespace
 
 void LogConfigDiagnostics(const config::Diagnostics& diagnostics) {
@@ -196,8 +204,7 @@ void UiPanel::DrawConfirmPopups() {
     reset_settings_pending_ = false;
   }
 
-  if (ImGui::BeginPopupModal(strings::kClearHistoryTitle, nullptr,
-                             ImGuiWindowFlags_AlwaysAutoResize)) {
+  if (BeginConstrainedModal(strings::kClearHistoryTitle)) {
     ImGui::TextWrapped("%s", strings::kClearHistoryBody);
     ImGui::Separator();
     if (ImGui::Button(strings::kConfirm)) {
@@ -211,8 +218,7 @@ void UiPanel::DrawConfirmPopups() {
     ImGui::EndPopup();
   }
 
-  if (ImGui::BeginPopupModal(strings::kResetSettingsTitle, nullptr,
-                             ImGuiWindowFlags_AlwaysAutoResize)) {
+  if (BeginConstrainedModal(strings::kResetSettingsTitle)) {
     ImGui::TextWrapped(strings::kResetSettingsBodyFormat, reset_settings_plugin_.c_str());
     ImGui::Separator();
     if (ImGui::Button(strings::kConfirm)) {
@@ -247,8 +253,7 @@ void UiPanel::DrawInstancePopups() {
   const bool readonly = setup_.config == nullptr || setup_.config->read_only() ||
                         setup_.config->SchemaTooNewDetected();
 
-  if (ImGui::BeginPopupModal(strings::kAddInstanceTitle, nullptr,
-                             ImGuiWindowFlags_AlwaysAutoResize)) {
+  if (BeginConstrainedModal(strings::kAddInstanceTitle)) {
     std::vector<PluginTypeInfo> types = setup_.plugins->SnapshotTypes();
     std::vector<const PluginTypeInfo*> candidates;
     for (const PluginTypeInfo& type : types) {
@@ -320,8 +325,7 @@ void UiPanel::DrawInstancePopups() {
     ImGui::EndPopup();
   }
 
-  if (ImGui::BeginPopupModal(strings::kInstanceDeleteTitle, nullptr,
-                             ImGuiWindowFlags_AlwaysAutoResize)) {
+  if (BeginConstrainedModal(strings::kInstanceDeleteTitle)) {
     ImGui::TextWrapped(strings::kInstanceDeleteBodyFormat, delete_instance_name_.c_str(),
                        delete_instance_id_.c_str(), delete_instance_path_.c_str());
     if (!delete_instance_error_.empty()) {

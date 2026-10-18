@@ -281,12 +281,11 @@ class ImGuiNotifier final : public PluginBase {
     }
 
     const float footer = ImGui::GetFrameHeightWithSpacing();
-    if (ImGui::BeginChild("##sm_detail_body", ImVec2(0.0f, -footer), true)) {
-      ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + ImGui::GetContentRegionAvail().x);
-      ImGui::TextUnformatted(notice.content.c_str());
-      ImGui::PopTextWrapPos();
-    }
-    ImGui::EndChild();
+    ImGui::InputTextMultiline("##sm_detail_body",
+                              const_cast<char *>(notice.content.c_str()),
+                              notice.content.length(),
+                              ImVec2(ImGui::GetCursorPos().x + ImGui::GetContentRegionAvail().x, -footer),
+                              ImGuiInputTextFlags_ReadOnly | ImGuiInputTextFlags_WordWrap);
 
     if (icon.reserve) ImGui::EndGroup();
 

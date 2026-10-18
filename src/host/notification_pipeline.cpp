@@ -9,6 +9,7 @@
 
 #include "host/log.h"
 #include "host/notify_scope.h"
+#include "host/rule_save.h"
 
 namespace sm {
 namespace host {
@@ -89,6 +90,37 @@ void NotificationPipeline::SetDelivery(INotifierDelivery* delivery) {
   delivery_ = delivery;
 }
 
+void NotificationPipeline::SetRuleSaveSink(RuleSaveSink* sink) {
+  rule_save_ = sink;
+}
+
+void NotificationPipeline::SetRuleSaveEnabled(bool enabled) {
+  rule_save_enabled_.store(enabled, std::memory_order_relaxed);
+}
+
+void NotificationPipeline::SaveRuleHit(const RuleSet& rules,
+                                       const OwnedNotification& n,
+                                       const RuleSaveHit& hit,
+                                       bool delivery_phase,
+                                       const std::string& notifier_id) {
+  RuleSaveSink* const sink = rule_save_;
+  if (sink == nullptr ||
+      !rule_save_enabled_.load(std::memory_order_relaxed)) {
+    return;
+  }
+  if (hit.rule_index >= rules.size()) return;
+  const Rule& rule = rules.rules()[hit.rule_index];
+  if (!rule.save.enabled) return;
+
+  NotifyScope notify_scope;
+  sm::Notification view = n.view;
+  view.title = hit.title.c_str();
+  view.content = hit.content.c_str();
+  view.summary = hit.summary.c_str();
+  view.level = hit.level;
+  sink->Save(rule, view, delivery_phase, notifier_id);
+}
+
 void NotificationPipeline::SetRules(std::shared_ptr<RuleSet> rules) {
   std::lock_guard<std::mutex> lock(rules_mutex_);
   rules_ = std::move(rules);
@@ -151,18 +183,31 @@ bool NotificationPipeline::Admit(const std::string& source_plugin,
   owned.source_plugin = source_plugin;
 
   // ---- 来源趟规则：全局改写/过滤，结果会进入历史 ----
+  const bool saving = rule_save_ != nullptr &&
+                      rule_save_enabled_.load(std::memory_order_relaxed);
   const std::shared_ptr<RuleSet> rules = RulesSnapshot();
   if (rules != nullptr && !rules->empty()) {
     RuleFields fields(owned.title, owned.content, owned.summary, owned.topic,
                       owned.level);
     RuleDiagnostics warnings;
-    if (!rules->ApplySource(&fields, source_plugin, &warnings)) {
-      LogRuleWarnings(source_plugin.c_str(), warnings);
+    RuleSaveHits save_hits;
+    const bool keep = rules->ApplySource(&fields, source_plugin, &warnings,
+                                         saving ? &save_hits : nullptr);
+    LogRuleWarnings(source_plugin.c_str(), warnings);
+
+    // 先落盘，再处理 drop/校验失败：命中即保存，不因通知被丢弃而丢失。
+    if (saving && !save_hits.empty()) {
+      owned.RebuildView();
+      for (const RuleSaveHit& hit : save_hits) {
+        SaveRuleHit(*rules, owned, hit, false, std::string());
+      }
+    }
+
+    if (!keep) {
       std::lock_guard<std::mutex> lock(mutex_);
       ++stats_.filtered_source;
       return false;
     }
-    LogRuleWarnings(source_plugin.c_str(), warnings);
 
     if (fields.has_title()) {
       owned.title.assign(fields.title_buffer());
@@ -265,6 +310,9 @@ std::size_t NotificationPipeline::PumpMainThread(std::size_t max_items) {
   const std::shared_ptr<RuleSet> rules = RulesSnapshot();
   const bool has_delivery_rules =
       rules != nullptr && rules->has_delivery_rules();
+  const bool saving = rule_save_ != nullptr &&
+                      rule_save_enabled_.load(std::memory_order_relaxed);
+  std::vector<unsigned char> saved;
 
   std::vector<std::string> matched;
   std::size_t consumed = 0;
@@ -284,6 +332,7 @@ std::size_t NotificationPipeline::PumpMainThread(std::size_t max_items) {
     const OwnedNotification& n = history_.back();
     ++consumed;
 
+    if (saving && rules != nullptr) saved.assign(rules->size(), 0);
     matched.clear();
     if (router != nullptr) router->Match(n.topic, &matched);
 
@@ -295,9 +344,21 @@ std::size_t NotificationPipeline::PumpMainThread(std::size_t max_items) {
         if (has_delivery_rules) {
           RuleFields fields(n.title, n.content, n.summary, n.topic, n.level);
           RuleDiagnostics warnings;
-          const bool keep =
-              rules->ApplyDelivery(&fields, n.source_plugin, id, &warnings);
+          RuleSaveHits save_hits;
+          const bool keep = rules->ApplyDelivery(
+              &fields, n.source_plugin, id, &warnings,
+              saving ? &save_hits : nullptr);
           LogRuleWarnings("host", warnings);
+
+          // 同一规则对同一条通知只保存一次：取第一个命中的 Notifier，
+          // 避免宽泛的投递规则为每个 Notifier 重复追写。
+          for (const RuleSaveHit& hit : save_hits) {
+            if (hit.rule_index < saved.size() && saved[hit.rule_index] == 0) {
+              saved[hit.rule_index] = 1;
+              SaveRuleHit(*rules, n, hit, true, id);
+            }
+          }
+
           if (!keep) {
             ++filtered;
             continue;

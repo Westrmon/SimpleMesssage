@@ -43,6 +43,25 @@ struct RuleTarget {
   std::vector<std::string> notifier;  // 非空 => 投递趟
 };
 
+struct RuleSave {
+  bool        enabled = false;
+  // 占位符模板；空 = 默认路径 data_dir/notify/{ruleid}.txt。
+  std::string path;
+};
+
+// 一条规则命中后交给宿主的保存快照。
+// 快照在该规则自己的 rewrite 生效之后取得，因此同时带 rewrite 的规则
+// 不会保存未重写的原文；同趟后续规则的改写也不会混进来。
+struct RuleSaveHit {
+  std::size_t rule_index = 0;
+  std::string title;
+  std::string content;
+  std::string summary;
+  sm::Level   level = sm::Level::Info;
+};
+
+using RuleSaveHits = std::vector<RuleSaveHit>;
+
 // 匹配表达式：title/content/summary/topic 四个字段，=~ 与 !~ 的右侧是
 // 双引号包住的正则；and / or / not 与括号组合，and 比 or 紧。
 // 注意：target 是整串匹配，而表达式里的 =~ / !~ 是子串搜索
@@ -150,10 +169,15 @@ struct Rule {
   bool drop = false;
   bool handle = false;
 
+  // 命中后把这条通知追加写入文件；只对 type = match 生效。
+  RuleSave save;
+
   // type = auto_summary 的参数。
+  // 简介长度完全由规则决定：只要求 >= 1，没有上限（20 只是默认值）。
   std::string auto_from = "content";
-  int         auto_max_codepoints = static_cast<int>(sm::limits::kSummaryCodepoints);
-  bool        auto_only_if_empty = true;
+  std::size_t auto_max_codepoints =
+      static_cast<std::size_t>(sm::limits::kSummaryCodepoints);
+  bool auto_only_if_empty = true;
 
   bool has_rewrite() const {
     return has_title || has_content || has_summary || has_level;
@@ -198,13 +222,16 @@ class RuleSet {
 
   // 来源趟：返回 false 表示通知被 drop，调用方应丢弃它。
   // runtime_warnings 收集运行时问题（例如重写结果为空），可为 nullptr。
+  // save_hits 非空时，收集启用了 save 的命中规则及其 rewrite 后的字段快照。
   bool ApplySource(RuleFields* fields, const std::string& source_plugin,
-                   RuleDiagnostics* runtime_warnings);
+                   RuleDiagnostics* runtime_warnings,
+                   RuleSaveHits* save_hits = nullptr);
 
   // 投递趟：返回 false 表示这一条不对该 Notifier 投递。
   bool ApplyDelivery(RuleFields* fields, const std::string& source_plugin,
                      const std::string& notifier_id,
-                     RuleDiagnostics* runtime_warnings);
+                     RuleDiagnostics* runtime_warnings,
+                     RuleSaveHits* save_hits = nullptr);
 
  private:
   struct Runtime;

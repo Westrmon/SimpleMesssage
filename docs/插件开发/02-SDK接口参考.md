@@ -215,7 +215,7 @@ static constexpr auto kSubsSpan = sm::span_of(kSubs);
 | `kMaxUrlBytes` | 2048 | `Notification::url` |
 | `kMaxIconBytes` | 2048 | `Notification::icon` |
 | `kMaxTopicBytes` | 128 | `Notification::topic` |
-| `kSummaryCodepoints` | 20 | 自动生成的 `summary` 长度（**码点**，不是字节） |
+| `kSummaryCodepoints` | 20 | 自动生成的 `summary` 默认长度（**码点**，不是字节）；宿主的 `auto_summary` 规则可用 `max_codepoints` 覆盖 |
 | `kMaxActionsPerNotification` | 4 | `Notification::actions.size` |
 
 #### Action
@@ -713,7 +713,10 @@ enum class StartResult : std::int32_t { Ok = 0, Empty = 1, Error = 2, Abort = 3,
 ### 7.3 设置项 schema
 
 ```cpp
-enum class SettingType : std::int32_t { Bool = 0, Int = 1, Double = 2, String = 3, Enum = 4 };
+enum class SettingType : std::int32_t {
+  Bool = 0, Int = 1, Double = 2, String = 3, Enum = 4,
+  Sound = 5,  // WAV / MP3 路径；表单额外提供"浏览…"与"试听"
+};
 
 struct SettingOption {
   const char* value = nullptr;  // 存进配置的值，建议小写短标识，如 "log"
@@ -726,9 +729,12 @@ struct SettingDef { /* 见下 */ };
 设计要点：插件**声明**设置项，宿主自动生成 imgui 表单、自动读写 TOML、
 自动校验。插件因此**完全不需要碰 UI 代码与文件 IO**。
 
-**恰好支持五种类型。**刻意不支持 string-list / 多行文本 / 路径选择器 / 颜色：
-每多一种类型，宿主的表单生成、TOML 读写、校验都要多一条分支，
-而插件设置几乎用不到它们。
+**恰好支持六种类型。**`Sound` 与 `String` 存法相同（都是字符串），区别只在
+界面：文本框旁边多出"浏览…"（选 WAV / MP3 文件）与"试听"（立即播放）两个按钮，
+相对路径按宿主的配置目录解析。刻意不支持 string-list / 多行文本 / 通用路径
+选择器 / 颜色：每多一种类型，宿主的表单生成、TOML 读写、校验都要多一条分支，
+而插件设置几乎用不到它们。通用的文件选择器如果需要，请像 `Sound` 一样先
+在 SDK 里定义清楚"值怎么解释"，而不是让宿主猜。
 
 `SettingDef` 实例**必须是静态存储期**（推荐 `constexpr` 数组），
 宿主持有它们的指针直到插件被卸载。
@@ -745,10 +751,10 @@ struct SettingDef { /* 见下 */ };
 | `default_bool` | `bool` | `Bool` 的默认值 |
 | `default_int` | `std::int64_t` | `Int` 的默认值 |
 | `default_double` | `double` | `Double` 的默认值 |
-| `default_string` | `const char*` | `String` / `Enum` 的默认值 |
+| `default_string` | `const char*` | `String` / `Enum` / `Sound` 的默认值 |
 | `min_int` / `max_int` | `std::int64_t` | `Int` 的范围 |
 | `min_double` / `max_double` | `double` | `Double` 的范围 |
-| `max_string_bytes` | `std::size_t` | `String` 的最长字节数。`0` 表示用 `kMaxStringSettingBytes` |
+| `max_string_bytes` | `std::size_t` | `String` / `Sound` 的最长字节数。`0` 表示用 `kMaxStringSettingBytes` |
 | `options` | `Span<const SettingOption>` | **仅 Enum**。为空或 `size == 0` 的枚举项会被宿主**拒绝加载** |
 
 > **`requires_restart` 为什么只是提示**：如果宿主真的"因为某个设置变了
@@ -784,6 +790,12 @@ constexpr SettingDef enumeration(const char* name, const char* def,
                                  Span<const SettingOption> options, const char* label,
                                  const char* description = nullptr,
                                  bool requires_restart = false);
+
+// Sound：值是 WAV 或 MP3 文件路径；相对路径按宿主的配置目录解析。
+// 宿主只负责存取与试听，实际怎么播放由插件决定。
+constexpr SettingDef sound(const char* name, const char* def, std::size_t max_bytes,
+                           const char* label, const char* description = nullptr,
+                           bool requires_restart = false);
 }
 ```
 

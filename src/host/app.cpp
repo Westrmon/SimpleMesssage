@@ -437,6 +437,11 @@ bool App::WireSubsystems() {
   pipeline_.SetHistoryCapacity(
       static_cast<std::size_t>(config_.App().notification_history_size));
 
+  rule_save_.SetDataDir(paths_.data_dir);
+  pipeline_.SetRuleSaveSink(&rule_save_);
+  // 安全模式承诺不落盘，即使配置里允许也强制关闭。
+  pipeline_.SetRuleSaveEnabled(config_.App().allow_rule_save && !safe_mode_);
+
   actions_.SetPipeline(&pipeline_);
   actions_.SetRouter(&router_);
   actions_.SetRunner(&plugins_);

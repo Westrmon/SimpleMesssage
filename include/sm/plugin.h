@@ -43,6 +43,9 @@ enum class SettingType : std::int32_t {
   Double = 2,
   String = 3,
   Enum = 4,
+  // 一段声音：WAV / MP3 文件路径（存法同 String）。
+  // 控制面板会在文本框旁额外给出"浏览…"与"试听"按钮。
+  Sound = 5,
 };
 
 // 枚举型设置的一个选项。
@@ -155,6 +158,22 @@ constexpr SettingDef enumeration(const char* name, const char* def,
   d.requires_restart = requires_restart;
   d.default_string = def;
   d.options = options;
+  return d;
+}
+
+// 声音设置：值是 WAV / MP3 文件路径。
+// 表单里除了文本框还会显示"浏览…"与"试听"。
+constexpr SettingDef sound(const char* name, const char* def, std::size_t max_bytes,
+                          const char* label, const char* description = nullptr,
+                          bool requires_restart = false) {
+  SettingDef d{};
+  d.name = name;
+  d.label = label;
+  d.description = description;
+  d.type = SettingType::Sound;
+  d.requires_restart = requires_restart;
+  d.default_string = def;
+  d.max_string_bytes = max_bytes;
   return d;
 }
 

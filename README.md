@@ -107,4 +107,4 @@ SM_DEFINE_PLUGIN(kMeta, Example);              // 必须在全局作用域
 | **GLFW**       | v3.5.1（Zlib/libpng）                      |
 | **libcurl**    | v8.23.0（curl） |
 |**cpp-httplib**       | v0.61.0（MIT， `source.webhook`） |
-
+|**miniaudio**       | v0.11.25（MIT， `notifier.sound`） |

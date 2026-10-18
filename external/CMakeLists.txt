@@ -1,6 +1,86 @@
 set(_sm_have_imgui FALSE)
 set(_sm_have_tomlpp FALSE)
 set(_sm_have_glfw FALSE)
+set(_sm_have_miniaudio FALSE)
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/miniaudio/miniaudio.h")
+    add_library(sm_miniaudio STATIC miniaudio/miniaudio_impl.cpp)
+    add_library(sm::miniaudio ALIAS sm_miniaudio)
+
+    target_include_directories(sm_miniaudio PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/miniaudio")
+    target_compile_features(sm_miniaudio PUBLIC cxx_std_17)
+
+    target_compile_definitions(sm_miniaudio PUBLIC
+        MA_NO_ENCODING
+        MA_NO_GENERATION
+        MA_NO_FLAC
+        MA_NO_VORBIS
+        MA_NO_RESOURCE_MANAGER
+        MA_NO_JACK
+        MA_NO_SNDIO
+        MA_NO_AUDIO4
+        MA_NO_OSS
+        MA_NO_AAUDIO
+        MA_NO_OPENSL
+        MA_NO_WEBAUDIO
+        MA_NO_CUSTOM
+        MA_NO_NULL)
+    if(WIN32)
+        target_compile_definitions(sm_miniaudio PUBLIC
+            MA_NO_DSOUND
+            MA_NO_WINMM)
+    elseif(APPLE)
+        target_compile_definitions(sm_miniaudio PUBLIC
+            MA_NO_ALSA
+            MA_NO_PULSEAUDIO)
+    else()
+        target_compile_definitions(sm_miniaudio PUBLIC
+            MA_NO_COREAUDIO)
+    endif()
+    set_target_properties(sm_miniaudio PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON)
+
+    if(MSVC)
+        # C4244 是 miniaudio 内部的窄化转换，按第三方代码处理。
+        # miniaudio 的全部实现都在一个 .obj 里，所以让每个函数 / 全局量各自
+        # 成为 COMDAT（/Gy /Gw），再配合 /Zc:inline 丢弃未引用的内联函数，
+        # 链接器就能把用不到的代码从插件和宿主体积里删掉。
+        # /O1（最小体积）覆盖 Release 默认的 /O2：通知音只有几百 KB 的解码
+        # 负载，这里换来的体积收益远大于那点性能差异。
+        target_compile_options(sm_miniaudio PRIVATE
+            /W3 /utf-8 /wd4244 /Gy /Gw /Zc:inline /O1)
+        if(SM_WIN7_COMPAT)
+            set_property(TARGET sm_miniaudio PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
+        else()
+            set_property(TARGET sm_miniaudio PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
+        endif()
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        # 与 MSVC 的 /O1 + COMDAT 对应：-Os 优先体积，每个函数 / 全局量单独
+        # 成节，最后由链接器 --gc-sections（macOS 是 -dead_strip）丢掉未引用项。
+        target_compile_options(sm_miniaudio PRIVATE
+            -Os -ffunction-sections -fdata-sections)
+        if(APPLE)
+            target_link_options(sm_miniaudio INTERFACE -Wl,-dead_strip)
+        elseif(UNIX)
+            target_link_options(sm_miniaudio INTERFACE -Wl,--gc-sections)
+        endif()
+    endif()
+
+    if(WIN32)
+        target_link_libraries(sm_miniaudio PUBLIC ole32)
+    else()
+        find_package(Threads REQUIRED)
+        target_link_libraries(sm_miniaudio PUBLIC Threads::Threads ${CMAKE_DL_LIBS} m)
+    endif()
+
+    set(_sm_have_miniaudio TRUE)
+else()
+    message(WARNING
+        "找不到 external/miniaudio/miniaudio.h —— notifier.sound 插件将被跳过。")
+endif()
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/imgui/imgui.cpp")
     add_library(sm_imgui SHARED
@@ -146,6 +226,7 @@ else()
         "找不到 external/httplib/httplib.h —— source.webhook 插件将被跳过。")
 endif()
 
+set(SM_HAVE_MINIAUDIO ${_sm_have_miniaudio} PARENT_SCOPE)
 set(SM_HAVE_IMGUI  ${_sm_have_imgui}  PARENT_SCOPE)
 set(SM_HAVE_TOMLPP ${_sm_have_tomlpp} PARENT_SCOPE)
 set(SM_HAVE_GLFW   ${_sm_have_glfw}   PARENT_SCOPE)

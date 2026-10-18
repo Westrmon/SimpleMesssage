@@ -1,14 +1,15 @@
 SimpleMessage — external/ 下的第三方依赖来源记录
 ===============================================
 
-五棵树都是**被 git 跟踪的普通文件**，随仓库一起提交、一起克隆。
+六棵树都是**被 git 跟踪的普通文件**，随仓库一起提交、一起克隆。
 仓库里没有 .gitmodules，也没有任何子模块登记项。
 
 因此 `git clone` 之后依赖就已经在，不需要拉取步骤；
 `git submodule update --init --recursive` 会是"成功但什么都不做"。
 判断依赖是否就绪，看的是目录里有没有 external/imgui/imgui.cpp、
-external/tomlplusplus/toml.hpp 与 external/glfw/CMakeLists.txt，
-不是任何命令的退出码。真正的获取链见 docs/02-宿主设计.md §20。
+external/tomlplusplus/toml.hpp、external/glfw/CMakeLists.txt 与
+external/miniaudio/miniaudio.h，不是任何命令的退出码。
+真正的获取链见 docs/02-宿主设计.md §20。
 
 具体下载时间与操作者未记录 —— 这正是这份文件本应记下、却已经缺失的部分，
 勿据此推断。
@@ -79,6 +80,35 @@ external/tomlplusplus/toml.hpp 与 external/glfw/CMakeLists.txt，
   需要的文件 httplib.h（只需这一个；不用它自带的 CMake 与测试）
   接入方式   INTERFACE 目标，附带 ws2_32（WinSock 是它的硬依赖）
   使用者     仅 source.webhook 插件（本机 HTTP 接收端）
+
+依赖 6：miniaudio
+-----------------
+  版本       0.11.25（external/miniaudio/miniaudio.h 的 MA_VERSION_*）
+  许可证     公有领域或 MIT-0（见文件开头的声明与文件末尾的许可全文）
+  来源 URL   https://github.com/mackron/miniaudio
+  需要的文件 miniaudio.h（单文件库）；external/miniaudio/miniaudio_impl.cpp
+             是本项目自己写的编译单元，定义 MINIAUDIO_IMPLEMENTATION 后
+             将它编成 STATIC 库 sm_miniaudio
+  接入方式   STATIC 目标 sm::miniaudio；宿主与 notifier.sound 都链接它。
+             Windows 额外链 ole32（WASAPI/COM）；POSIX 链
+             Threads::Threads、dl、m。miniaudio 默认按需动态加载系统后端，
+             不需要随发布包额外部署 DLL。
+             本项目在编译期裁掉了不用的部分：MA_NO_ENCODING、
+             MA_NO_GENERATION、MA_NO_FLAC、MA_NO_VORBIS、
+             MA_NO_RESOURCE_MANAGER，以及除 WASAPI（Windows）/
+             ALSA + PulseAudio（Linux）/ Core Audio（macOS）之外的后端。
+             MSVC 上再加 /Gy /Gw /Zc:inline /O1（其他编译器是
+             -Os -ffunction-sections -fdata-sections + --gc-sections），
+             由链接器丢掉未引用的函数。关闭资源管理器意味着
+             ma_sound_init_from_file() 不可用，播放改为
+             ma_decoder_init_file() + ma_sound_init_from_data_source()。
+  使用者     notifier.sound 插件（解码并播放 WAV / MP3）；宿主平台层的
+             sound.h 实现（设置表单的"试听"）。
+  备注       之所以选单文件库而不是系统播放 API，是因为 PlaySound 只有
+             Windows 有、且不支持 MP3；miniaudio 让同一份播放代码在
+             Windows / Linux / macOS 上都可用。版本差异主要影响支持的格式与
+             后端列表，PlaySound 时代的"系统声音别名"在 miniaudio 里没有
+             对应概念，插件已不再支持别名。
 
 若将来想改成真正的 git 子模块
 -----------------------------

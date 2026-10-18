@@ -240,6 +240,34 @@ content = "$content.1 / $title.0 / $$5"
   SM_CHECK_INT(parsed.set->counters(0).hits, 1);
 }
 
+SM_TEST(rules_rewrite, split_gotify_summary_into_title_and_summary) {
+  // source.gotify 在能映射应用时把应用名放进 title、把 Gotify 消息自己的
+  // title 与正文前 30 字节拼进 summary，因此要拆分的是 summary，不是 content。
+  Parsed parsed = ParseRules(R"RULES(
+schema_version = 1
+[[rules]]
+id = "maaTitle"
+name = "MaaTitle"
+match = 'summary =~ "^\[(\[MAA\][^\]]*)\]\s*(.*)$" and content =~ "([\s\S]+)"'
+[rules.rewrite]
+title = "$summary.1"
+summary = "$content.1"
+)RULES");
+  SM_CHECK_INT(parsed.set->size(), 1);
+  SM_CHECK_INT(parsed.set->skipped(), 0);
+
+  std::string title = "MAA";
+  std::string content =
+      "这是 MAA 外部通知测试信息。如果你看到了这段内容，就说明通知发送成功了！";
+  std::string summary = "[[MAA] MAA 外部通知测试]  这是 MAA 外部通知测试";
+  std::string topic = "gotify.in";
+  RuleFields fields(title, content, summary, topic, sm::Level::Info);
+  SM_CHECK(Apply(parsed.set.get(), &fields, "source.gotify"));
+  SM_CHECK_TEXT(std::string(fields.title()), "[MAA] MAA 外部通知测试");
+  SM_CHECK_TEXT(std::string(fields.summary()), content);
+  SM_CHECK_TEXT(std::string(fields.content()), content);
+}
+
 SM_TEST(rules_rewrite, level_and_summary) {
   Parsed parsed = ParseRules(R"(
 schema_version = 1
@@ -591,6 +619,49 @@ SM_TEST(rules_auto_summary, default_file_generates_summary) {
   SM_CHECK_INT(parsed.set->counters(0).hits, 1);
 }
 
+SM_TEST(rules_auto_summary, max_codepoints_is_not_capped_to_sdk_default) {
+  Parsed parsed = ParseRules(R"(
+schema_version = 1
+[[rules]]
+id = "auto"
+type = "auto_summary"
+max_codepoints = 500
+)");
+  SM_CHECK_INT(parsed.set->size(), 1);
+  SM_CHECK_INT(parsed.set->skipped(), 0);
+  SM_CHECK_INT(WarningCount(parsed.diagnostics), 0);
+
+  // 超过 SDK 默认的 20 个码点、也超过旧的 128 字节固定缓冲。
+  std::string content(300, 'a');
+  content += " 0123456789 0123456789";
+  std::string title;
+  std::string summary;
+  std::string topic;
+  RuleFields fields(title, content, summary, topic, sm::Level::Info);
+  SM_CHECK(Apply(parsed.set.get(), &fields, "s"));
+  SM_CHECK_TEXT(std::string(fields.summary()), content);
+}
+
+SM_TEST(rules_auto_summary, non_positive_max_codepoints_clamps_to_one) {
+  Parsed parsed = ParseRules(R"(
+schema_version = 1
+[[rules]]
+id = "auto"
+type = "auto_summary"
+max_codepoints = 0
+)");
+  SM_CHECK_INT(parsed.set->size(), 1);
+  SM_CHECK(HasMessage(parsed.diagnostics, "小于 1"));
+
+  std::string title;
+  std::string content = "abc";
+  std::string summary;
+  std::string topic;
+  RuleFields fields(title, content, summary, topic, sm::Level::Info);
+  SM_CHECK(Apply(parsed.set.get(), &fields, "s"));
+  SM_CHECK_TEXT(std::string(fields.summary()), "a…");
+}
+
 SM_TEST(rules_auto_summary, only_if_empty_respects_existing_summary) {
   Parsed parsed = ParseRules(sm::host::DefaultRulesFileText());
 
@@ -729,4 +800,226 @@ mystery = 4
   SM_CHECK_INT(parsed.set->size(), 1);
   SM_CHECK_INT(parsed.set->skipped(), 0);
   SM_CHECK(WarningCount(parsed.diagnostics) >= 4);
+}
+
+// ---------------------------------------------------------------------------
+// 规则保存
+// ---------------------------------------------------------------------------
+
+SM_TEST(rules_save, nested_table_defaults_to_enabled) {
+  Parsed parsed = ParseRules(R"(
+schema_version = 1
+[[rules]]
+id = "archive"
+name = "归档"
+match = 'topic =~ "^mail$"'
+[rules.save]
+path = "notify/{year}/{ruleid}.txt"
+)");
+  SM_CHECK_INT(parsed.set->size(), 1);
+  SM_CHECK(parsed.set->rules()[0].save.enabled);
+  SM_CHECK_TEXT(parsed.set->rules()[0].save.path,
+                "notify/{year}/{ruleid}.txt");
+  SM_CHECK_INT(WarningCount(parsed.diagnostics), 0);
+}
+
+SM_TEST(rules_save, inline_table_is_accepted) {
+  Parsed parsed = ParseRules(R"(
+schema_version = 1
+[[rules]]
+id = "r"
+save = { enabled = true, path = "custom.txt" }
+)");
+  SM_CHECK_INT(parsed.set->size(), 1);
+  SM_CHECK(parsed.set->rules()[0].save.enabled);
+  SM_CHECK_TEXT(parsed.set->rules()[0].save.path, "custom.txt");
+}
+
+SM_TEST(rules_save, disabled_rule_still_loads_and_warns_about_path) {
+  Parsed parsed = ParseRules(R"(
+schema_version = 1
+[[rules]]
+id = "r"
+[rules.save]
+enabled = false
+path = "unused.txt"
+)");
+  SM_CHECK_INT(parsed.set->size(), 1);
+  SM_CHECK(!parsed.set->rules()[0].save.enabled);
+  SM_CHECK(HasMessage(parsed.diagnostics, "save.enabled = false"));
+}
+
+SM_TEST(rules_save, wrong_types_skip_the_rule) {
+  Parsed not_table = ParseRules(R"(
+schema_version = 1
+[[rules]]
+id = "a"
+save = true
+)");
+  SM_CHECK_INT(not_table.set->size(), 0);
+
+  Parsed bad_enabled = ParseRules(R"(
+schema_version = 1
+[[rules]]
+id = "b"
+[rules.save]
+enabled = "yes"
+)");
+  SM_CHECK_INT(bad_enabled.set->size(), 0);
+
+  Parsed bad_path = ParseRules(R"(
+schema_version = 1
+[[rules]]
+id = "c"
+[rules.save]
+path = 3
+)");
+  SM_CHECK_INT(bad_path.set->size(), 0);
+}
+
+SM_TEST(rules_save, auto_summary_ignores_save) {
+  Parsed parsed = ParseRules(R"(
+schema_version = 1
+[[rules]]
+id = "summary"
+type = "auto_summary"
+[rules.save]
+enabled = true
+)");
+  SM_CHECK_INT(parsed.set->size(), 1);
+  SM_CHECK(!parsed.set->rules()[0].save.enabled);
+  SM_CHECK(HasMessage(parsed.diagnostics, "auto_summary"));
+}
+
+SM_TEST(rules_save, unknown_placeholder_warns) {
+  Parsed parsed = ParseRules(R"(
+schema_version = 1
+[[rules]]
+id = "r"
+[rules.save]
+path = "notify/{date}-{mystery}.txt"
+)");
+  SM_CHECK_INT(parsed.set->size(), 1);
+  SM_CHECK(HasMessage(parsed.diagnostics, "mystery"));
+}
+
+SM_TEST(rules_save, source_hit_snapshot_follows_own_rewrite) {
+  Parsed parsed = ParseRules(R"(
+schema_version = 1
+[[rules]]
+id = "first"
+match = 'title =~ "^(.*)$"'
+[rules.rewrite]
+title = "A-$title.1"
+content = "rewritten-body"
+[rules.save]
+enabled = true
+[[rules]]
+id = "second"
+match = 'title =~ "^A-.*$"'
+[rules.rewrite]
+title = "B-$title.0"
+)");
+  SM_CHECK_INT(parsed.set->size(), 2);
+
+  std::string title = "orig";
+  std::string content = "body";
+  std::string summary;
+  std::string topic;
+  RuleFields fields(title, content, summary, topic, sm::Level::Warning);
+  sm::host::RuleSaveHits hits;
+  RuleDiagnostics warnings;
+  SM_CHECK(parsed.set->ApplySource(&fields, "s", &warnings, &hits));
+
+  SM_CHECK_INT(hits.size(), 1);
+  if (hits.size() == 1) {
+    SM_CHECK_INT(hits[0].rule_index, 0);
+    SM_CHECK_TEXT(hits[0].title, "A-orig");
+    SM_CHECK_TEXT(hits[0].content, "rewritten-body");
+    SM_CHECK(hits[0].level == sm::Level::Warning);
+  }
+  // 第二条规则的改写不污染第一条的快照。
+  SM_CHECK_TEXT(std::string(fields.title()), "B-A-orig");
+}
+
+SM_TEST(rules_save, drop_rule_still_reports_hit) {
+  Parsed parsed = ParseRules(R"(
+schema_version = 1
+[[rules]]
+id = "drop"
+drop = true
+match = 'title =~ "^noise$"'
+[rules.save]
+enabled = true
+)");
+  std::string title = "noise";
+  std::string content = "body";
+  std::string summary;
+  std::string topic;
+  RuleFields fields(title, content, summary, topic, sm::Level::Info);
+  sm::host::RuleSaveHits hits;
+  RuleDiagnostics warnings;
+  SM_CHECK(!parsed.set->ApplySource(&fields, "s", &warnings, &hits));
+  SM_CHECK_INT(hits.size(), 1);
+  if (hits.size() == 1) {
+    SM_CHECK_TEXT(hits[0].title, "noise");
+    SM_CHECK_TEXT(hits[0].content, "body");
+  }
+}
+
+SM_TEST(rules_save, unmatched_rule_reports_nothing) {
+  Parsed parsed = ParseRules(R"(
+schema_version = 1
+[[rules]]
+id = "r"
+match = 'title =~ "^hit$"'
+[rules.save]
+enabled = true
+)");
+  std::string title = "miss";
+  std::string content = "body";
+  std::string summary;
+  std::string topic;
+  RuleFields fields(title, content, summary, topic, sm::Level::Info);
+  sm::host::RuleSaveHits hits;
+  RuleDiagnostics warnings;
+  SM_CHECK(parsed.set->ApplySource(&fields, "s", &warnings, &hits));
+  SM_CHECK(hits.empty());
+}
+
+SM_TEST(rules_save, delivery_hit_uses_delivery_rewrite) {
+  Parsed parsed = ParseRules(R"(
+schema_version = 1
+[[rules]]
+id = "deliver"
+[rules.target]
+notifier = ["^notifier.test$"]
+[rules.rewrite]
+summary = "delivered"
+[rules.save]
+enabled = true
+)");
+  SM_CHECK_INT(parsed.set->size(), 1);
+  SM_CHECK(parsed.set->rules()[0].delivery_phase);
+
+  std::string title = "x";
+  std::string content = "body";
+  std::string summary;
+  std::string topic;
+  RuleFields fields(title, content, summary, topic, sm::Level::Info);
+  sm::host::RuleSaveHits hits;
+  RuleDiagnostics warnings;
+  SM_CHECK(parsed.set->ApplyDelivery(&fields, "s", "notifier.test", &warnings,
+                                     &hits));
+  SM_CHECK_INT(hits.size(), 1);
+  if (hits.size() == 1) {
+    SM_CHECK_INT(hits[0].rule_index, 0);
+    SM_CHECK_TEXT(hits[0].summary, "delivered");
+  }
+
+  RuleFields other_fields(title, content, summary, topic, sm::Level::Info);
+  sm::host::RuleSaveHits other_hits;
+  parsed.set->ApplyDelivery(&other_fields, "s", "notifier.other", &warnings,
+                            &other_hits);
+  SM_CHECK(other_hits.empty());
 }

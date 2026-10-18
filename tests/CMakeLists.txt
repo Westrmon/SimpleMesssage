@@ -19,7 +19,9 @@ if(SM_HAVE_TOMLPP)
         main.cpp
         test_framework.cpp
         test_rules.cpp
+        test_placeholders.cpp
         "${CMAKE_SOURCE_DIR}/src/host/rules.cpp"
+        "${CMAKE_SOURCE_DIR}/src/host/placeholders.cpp"
     )
 
     target_include_directories(sm_host_rules_tests PRIVATE

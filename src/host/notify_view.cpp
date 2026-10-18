@@ -34,6 +34,10 @@ bool StartsWith(const std::string& text, const std::string& prefix) {
 
 float RowHeight() { return ImGui::GetTextLineHeightWithSpacing(); }
 
+float TableRowHeight() {
+  return RowHeight() + ImGui::GetStyle().CellPadding.y * 2.0f;
+}
+
 }  // namespace
 
 std::uint32_t LevelColor(sm::Level level) {
@@ -222,7 +226,7 @@ std::int64_t DrawNotificationList(const char* table_id,
 
   const std::int64_t now = util::now_unix_ms();
   ImGuiListClipper clipper;
-  clipper.Begin(static_cast<int>(items.size()), RowHeight());
+  clipper.Begin(static_cast<int>(items.size()), TableRowHeight());
   while (clipper.Step()) {
     for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row) {
       const OwnedNotification& n = *items[static_cast<std::size_t>(row)];
@@ -261,6 +265,23 @@ std::int64_t DrawNotificationList(const char* table_id,
   return clicked_seq;
 }
 
+namespace {
+
+// ImGui 没有可选中复制的静态文本控件；正文改用只读多行输入框承载。
+// 同一时刻只绘制一条详情，因此静态缓冲即可；同 seq 的通知可能被原地更新，按内容判断。
+std::vector<char>& DetailContentBuffer(const OwnedNotification& n) {
+  static std::vector<char> buffer;
+  static std::string cached;
+  if (cached != n.content || buffer.size() != n.content.size() + 1) {
+    buffer.assign(n.content.begin(), n.content.end());
+    buffer.push_back('\0');
+    cached = n.content;
+  }
+  return buffer;
+}
+
+}  // namespace
+
 bool DrawNotificationDetail(const char* id_scope, const OwnedNotification& n,
                             const Router* router, IActionDispatcher* dispatcher) {
   ImGui::PushID(id_scope != nullptr ? id_scope : "");
@@ -280,12 +301,10 @@ bool DrawNotificationDetail(const char* id_scope, const OwnedNotification& n,
 
   ImGui::SeparatorText(strings::kDetailContent);
   const float content_height = ImGui::GetTextLineHeightWithSpacing() * 8.0f;
-  if (ImGui::BeginChild("##content", ImVec2(0.0f, content_height), ImGuiChildFlags_Borders)) {
-    ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextUnformatted(n.content.c_str());
-    ImGui::PopTextWrapPos();
-  }
-  ImGui::EndChild();
+  std::vector<char>& content = DetailContentBuffer(n);
+  ImGui::InputTextMultiline("##content", content.data(), content.size(),
+                            ImVec2(ImGui::GetContentRegionAvail().x, content_height),
+                            ImGuiInputTextFlags_ReadOnly | ImGuiInputTextFlags_WordWrap);
 
   if (!n.url.empty()) {
     ImGui::TextDisabled("%s", n.url.c_str());

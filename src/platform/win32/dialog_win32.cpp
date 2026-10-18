@@ -18,13 +18,26 @@ namespace {
 // 32768 是 Win32 对 OPENFILENAMEW.lpstrFile 允许的上限（MAX_PATH 只有 260）。
 constexpr std::size_t kPathBufferChars = 32768;
 
-std::wstring BuildFilter(const SaveFileDialogOptions& options) {
+// filter_extension 可以写多个扩展名，用分号分隔（例如 "wav;mp3"）。
+std::wstring BuildFilter(const std::string& filter_label,
+                         const std::string& filter_extension,
+                         const std::string& all_files_label) {
+  std::wstring pattern = L"*.";
+  const std::wstring extensions = utf8::widen(filter_extension.c_str());
+  for (const wchar_t c : extensions) {
+    if (c == L';') {
+      pattern += L";*.";
+    } else {
+      pattern.push_back(c);
+    }
+  }
+
   std::wstring filter;
-  filter += utf8::widen(options.filter_label.c_str());
+  filter += utf8::widen(filter_label.c_str());
   filter.push_back(L'\0');
-  filter += L"*." + utf8::widen(options.filter_extension.c_str());
+  filter += pattern;
   filter.push_back(L'\0');
-  filter += utf8::widen(options.all_files_label.c_str());
+  filter += utf8::widen(all_files_label.c_str());
   filter.push_back(L'\0');
   filter += L"*.*";
   filter.push_back(L'\0');
@@ -42,8 +55,12 @@ std::string ShowSaveFileDialog(const SaveFileDialogOptions& options) {
   std::copy(initial_name.begin(), initial_name.begin() + name_chars, buffer.begin());
 
   const std::wstring initial_dir = utf8::widen(options.initial_directory.c_str());
-  const std::wstring filter = BuildFilter(options);
-  const std::wstring default_ext = utf8::widen(options.filter_extension.c_str());
+  const std::wstring filter =
+      BuildFilter(options.filter_label, options.filter_extension,
+                  options.all_files_label);
+  std::wstring default_ext = utf8::widen(options.filter_extension.c_str());
+  const std::size_t semicolon = default_ext.find(L';');
+  if (semicolon != std::wstring::npos) default_ext.resize(semicolon);
 
   OPENFILENAMEW ofn{};
   ofn.lStructSize = sizeof(ofn);
@@ -56,6 +73,27 @@ std::string ShowSaveFileDialog(const SaveFileDialogOptions& options) {
   ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
 
   if (::GetSaveFileNameW(&ofn) == 0) return std::string();
+  return utf8::narrow(buffer.data());
+}
+
+std::string ShowOpenFileDialog(const OpenFileDialogOptions& options) {
+  std::vector<wchar_t> buffer(kPathBufferChars, L'\0');
+
+  const std::wstring initial_dir = utf8::widen(options.initial_directory.c_str());
+  const std::wstring filter =
+      BuildFilter(options.filter_label, options.filter_extension,
+                  options.all_files_label);
+
+  OPENFILENAMEW ofn{};
+  ofn.lStructSize = sizeof(ofn);
+  ofn.hwndOwner = ::GetActiveWindow();
+  ofn.lpstrFilter = filter.c_str();
+  ofn.lpstrFile = buffer.data();
+  ofn.nMaxFile = static_cast<DWORD>(buffer.size());
+  ofn.lpstrInitialDir = initial_dir.empty() ? nullptr : initial_dir.c_str();
+  ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+
+  if (::GetOpenFileNameW(&ofn) == 0) return std::string();
   return utf8::narrow(buffer.data());
 }
 

@@ -56,8 +56,8 @@ sm::LogLevel ToLogLevel(sm::Level level) {
     case sm::Level::Debug:    return sm::LogLevel::Trace;
     case sm::Level::Info:     return sm::LogLevel::Info;
     case sm::Level::Warning:  return sm::LogLevel::Warn;
-    case sm::Level::Error:    return sm::LogLevel::Error;
-    case sm::Level::Critical: return sm::LogLevel::Error;
+    case sm::Level::Error:    return sm::LogLevel::Warn;
+    case sm::Level::Critical: return sm::LogLevel::Warn;
   }
   return sm::LogLevel::Info;
 }

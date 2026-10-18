@@ -534,7 +534,8 @@ void UiPanel::DrawPluginDetail(const PluginInfo& info) {
           ImGui::TextWrapped("%s", strings::kSettingSchemaTooNew);
         } else {
           ImGui::TextDisabled("%s", strings::kSettingDirtyHint);
-          DrawSettingsForm(info.id.c_str(), settings, info.settings, &form_state_);
+          DrawSettingsForm(info.id.c_str(), settings, info.settings, &form_state_,
+                           setup_.config->PathsRef().config_dir.c_str());
         }
       }
 
@@ -667,6 +668,24 @@ void UiPanel::DrawNotificationsPage() {
     if (!want_known) ImGui::TextWrapped("%s", strings::kNotifyMonitorMissingHint);
     ImGui::PopStyleColor();
     ImGui::PopID();
+  }
+
+  if (setup_.config != nullptr) {
+    ImGui::SeparatorText(strings::kSecRuleSave);
+    const bool readonly = ReadOnlyMode(setup_);
+    bool allowed = setup_.config->App().allow_rule_save;
+    if (readonly) ImGui::BeginDisabled();
+    if (ImGui::Checkbox(strings::kAllowRuleSave, &allowed)) {
+      setup_.config->SetAllowRuleSave(allowed);
+      if (setup_.pipeline != nullptr) {
+        setup_.pipeline->SetRuleSaveEnabled(
+            allowed && (setup_.host == nullptr || !setup_.host->safe_mode()));
+      }
+    }
+    if (readonly) ImGui::EndDisabled();
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::TextWrapped("%s", strings::kAllowRuleSaveHint);
+    ImGui::PopStyleColor();
   }
 
   ImGui::TextUnformatted(strings::kFilterLevel);
@@ -938,6 +957,19 @@ void UiPanel::DrawRulesPage() {
         }
       } else {
         ImGui::TextDisabled("%s", strings::kRuleNoRewrite);
+      }
+
+      ImGui::TextDisabled("%s", rule.save.enabled ? strings::kRuleSaveEnabled
+                                                  : strings::kRuleSaveDisabled);
+      if (rule.save.enabled) {
+        if (rule.save.path.empty()) {
+          ImGui::TextWrapped("%s", strings::kRuleSaveDefaultPath);
+        } else {
+          ImGui::TextWrapped(strings::kRuleSavePathFormat, rule.save.path.c_str());
+        }
+        if (setup_.config == nullptr || !setup_.config->App().allow_rule_save) {
+          ImGui::TextColored(kColorWarn, "%s", strings::kRuleSaveGlobalOff);
+        }
       }
     }
   }

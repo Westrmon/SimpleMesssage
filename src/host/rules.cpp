@@ -20,6 +20,7 @@
 
 #include "sm/summary.h"
 
+#include "host/placeholders.h"
 #include "host/plugin_id.h"
 
 #include <toml.hpp>
@@ -32,7 +33,7 @@ namespace {
 constexpr std::size_t kMaxRules = 256;
 constexpr std::size_t kMaxRegexBytes = 1024;
 constexpr std::size_t kMaxRuleIdBytes = 64;
-constexpr std::size_t kMaxSummaryBufferBytes = 128;
+constexpr std::size_t kMaxSavePathBytes = 1024;
 
 constexpr int kFieldTitle = 0;
 constexpr int kFieldContent = 1;
@@ -709,7 +710,7 @@ bool BuildRule(const toml::table& table, std::size_t index,
   WarnUnknownRuleKeys(
       table, prefix,
       {"id", "name", "type", "target", "match", "case_insensitive", "rewrite",
-       "drop", "handle", "from", "max_codepoints", "only_if_empty"},
+       "drop", "handle", "save", "from", "max_codepoints", "only_if_empty"},
       diagnostics);
 
   if (const toml::node* target_node = table.get("target")) {
@@ -862,6 +863,58 @@ bool BuildRule(const toml::table& table, std::size_t index,
       return false;
     }
 
+    if (const toml::node* save_node = table.get("save")) {
+      const toml::table* save = save_node->as_table();
+      if (save == nullptr) {
+        AddDiag(diagnostics, RuleDiagnostic::Severity::Warn,
+                prefix + " 的 save 不是表，已跳过");
+        return false;
+      }
+      WarnUnknownRuleKeys(*save, prefix + " 的 save", {"enabled", "path"},
+                          diagnostics);
+
+      if (const toml::node* enabled_node = save->get("enabled")) {
+        const auto* enabled_value = enabled_node->as_boolean();
+        if (enabled_value == nullptr) {
+          AddDiag(diagnostics, RuleDiagnostic::Severity::Warn,
+                  prefix + " 的 save.enabled 不是布尔值，已跳过");
+          return false;
+        }
+        rule.save.enabled = enabled_value->get();
+      } else {
+        // 写了 [rules.save] 就表示想保存；显式 enabled = false 才关闭。
+        rule.save.enabled = true;
+      }
+
+      if (const toml::node* path_node = save->get("path")) {
+        const auto* path_value = path_node->as_string();
+        if (path_value == nullptr) {
+          AddDiag(diagnostics, RuleDiagnostic::Severity::Warn,
+                  prefix + " 的 save.path 不是字符串，已跳过");
+          return false;
+        }
+        rule.save.path = path_value->get();
+      }
+
+      if (rule.save.path.size() > kMaxSavePathBytes) {
+        AddDiag(diagnostics, RuleDiagnostic::Severity::Warn,
+                prefix + " 的 save.path 超过 " +
+                    std::to_string(kMaxSavePathBytes) + " 字节，保存已关闭");
+        rule.save.enabled = false;
+      } else if (rule.save.enabled) {
+        for (const std::string& name : FindPlaceholderNames(rule.save.path)) {
+          if (!IsKnownNotificationPlaceholder(name)) {
+            AddDiag(diagnostics, RuleDiagnostic::Severity::Warn,
+                    prefix + " 的 save.path 含未知占位符 {" + name +
+                        "}，将原样保留");
+          }
+        }
+      } else if (!rule.save.path.empty()) {
+        AddDiag(diagnostics, RuleDiagnostic::Severity::Warn,
+                prefix + " 的 save.enabled = false，save.path 会被忽略");
+      }
+    }
+
     ExprParser parser(rule.match_text, rule.case_insensitive);
     std::string error;
     if (!parser.Parse(&compiled->expr, &error)) {
@@ -899,7 +952,7 @@ bool BuildRule(const toml::table& table, std::size_t index,
   } else {
     // auto_summary 只接受自己的参数；其它字段是明显的误用，提示后忽略。
     for (const char* key :
-         {"match", "case_insensitive", "rewrite", "drop", "handle"}) {
+         {"match", "case_insensitive", "rewrite", "drop", "handle", "save"}) {
       if (table.get(key) != nullptr) {
         AddDiag(diagnostics, RuleDiagnostic::Severity::Warn,
                 prefix + " 是 auto_summary，" + key + " 会被忽略");
@@ -927,18 +980,15 @@ bool BuildRule(const toml::table& table, std::size_t index,
         AddDiag(diagnostics, RuleDiagnostic::Severity::Warn,
                 prefix + " 的 max_codepoints 不是整数，改用 20");
       } else {
+        // 上限完全由规则决定；宿主只兜住“小于 1”这种无法取码点的值。
         std::int64_t count = max_value->get();
-        const std::int64_t limit =
-            static_cast<std::int64_t>(sm::limits::kSummaryCodepoints);
-        if (count < 1 || count > limit) {
-          const std::int64_t clamped = count < 1 ? 1 : limit;
+        if (count < 1) {
           AddDiag(diagnostics, RuleDiagnostic::Severity::Warn,
                   prefix + " 的 max_codepoints = " + std::to_string(count) +
-                      " 超出范围 [1, " + std::to_string(limit) + "]，夹到 " +
-                      std::to_string(clamped));
-          count = clamped;
+                      " 小于 1，夹到 1");
+          count = 1;
         }
-        rule.auto_max_codepoints = static_cast<int>(count);
+        rule.auto_max_codepoints = static_cast<std::size_t>(count);
       }
     }
 
@@ -1147,10 +1197,24 @@ void WarnOnce(std::atomic<bool>* flag, RuleDiagnostics* warnings,
   AddDiag(warnings, RuleDiagnostic::Severity::Warn, message);
 }
 
+// 在规则自己的 rewrite 之后取快照，且不受同趟后续规则影响。
+void AddSaveHit(const Rule& rule, std::size_t index, const RuleFields& fields,
+                RuleSaveHits* save_hits) {
+  if (save_hits == nullptr || !rule.save.enabled) return;
+  RuleSaveHit hit;
+  hit.rule_index = index;
+  hit.title = std::string(fields.title());
+  hit.content = std::string(fields.content());
+  hit.summary = std::string(fields.summary());
+  hit.level = fields.level();
+  save_hits->push_back(std::move(hit));
+}
+
 }  // namespace
 
 bool RuleSet::ApplySource(RuleFields* fields, const std::string& source_plugin,
-                          RuleDiagnostics* runtime_warnings) {
+                          RuleDiagnostics* runtime_warnings,
+                          RuleSaveHits* save_hits) {
   for (std::size_t i = 0; i < rules_.size(); ++i) {
     Rule& rule = rules_[i];
     Runtime& runtime = *runtime_[i];
@@ -1162,11 +1226,13 @@ bool RuleSet::ApplySource(RuleFields* fields, const std::string& source_plugin,
     if (rule.type == RuleType::AutoSummary) {
       if (rule.auto_only_if_empty && !fields->summary().empty()) continue;
 
-      char buffer[kMaxSummaryBufferBytes];
-      buffer[0] = '\0';
-      sm::make_summary(fields->content().data(), rule.auto_max_codepoints,
-                       buffer, sizeof(buffer));
-      fields->SetSummary(buffer);
+      // 简介长度由规则决定，缓冲区按正文大小分配；make_summary 的
+      // 输出不会长于输入（折叠空白只会变短）。
+      const std::string_view content = fields->content();
+      std::vector<char> buffer(content.size() + 4);  // 省略号 + NUL
+      sm::make_summary(content.data(), rule.auto_max_codepoints, buffer.data(),
+                       buffer.size());
+      fields->SetSummary(buffer.data());
       runtime.hits.fetch_add(1, std::memory_order_relaxed);
       continue;
     }
@@ -1178,6 +1244,7 @@ bool RuleSet::ApplySource(RuleFields* fields, const std::string& source_plugin,
 
     if (rule.drop) {
       runtime.blocked.fetch_add(1, std::memory_order_relaxed);
+      AddSaveHit(rule, i, *fields, save_hits);
       return false;
     }
 
@@ -1230,6 +1297,7 @@ bool RuleSet::ApplySource(RuleFields* fields, const std::string& source_plugin,
       if (rule.has_level) fields->SetLevel(rule.level);
     }
 
+    AddSaveHit(rule, i, *fields, save_hits);
     if (rule.handle) return true;
   }
   return true;
@@ -1237,7 +1305,8 @@ bool RuleSet::ApplySource(RuleFields* fields, const std::string& source_plugin,
 
 bool RuleSet::ApplyDelivery(RuleFields* fields, const std::string& source_plugin,
                             const std::string& notifier_id,
-                            RuleDiagnostics* runtime_warnings) {
+                            RuleDiagnostics* runtime_warnings,
+                            RuleSaveHits* save_hits) {
   for (std::size_t i = 0; i < rules_.size(); ++i) {
     Rule& rule = rules_[i];
     Runtime& runtime = *runtime_[i];
@@ -1254,6 +1323,7 @@ bool RuleSet::ApplyDelivery(RuleFields* fields, const std::string& source_plugin
 
     if (rule.drop) {
       runtime.blocked.fetch_add(1, std::memory_order_relaxed);
+      AddSaveHit(rule, i, *fields, save_hits);
       return false;
     }
 
@@ -1306,6 +1376,7 @@ bool RuleSet::ApplyDelivery(RuleFields* fields, const std::string& source_plugin
       if (rule.has_level) fields->SetLevel(rule.level);
     }
 
+    AddSaveHit(rule, i, *fields, save_hits);
     if (rule.handle) return true;
   }
   return true;

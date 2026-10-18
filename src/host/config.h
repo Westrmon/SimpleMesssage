@@ -61,6 +61,8 @@ struct AppConfig {
   std::int32_t   ui_font_size = 16;
   bool           single_instance = true;
   std::int32_t   notification_history_size = 200;
+  // 规则保存的全局许可；默认关闭，开启后无视通知来源。
+  bool           allow_rule_save = false;
 };
 
 enum class NotifyCorner : std::int32_t {
@@ -213,6 +215,7 @@ class ConfigStore {
   void SetUiFontSize(std::int32_t size);
   void SetNotificationHistorySize(std::int32_t size);
   void SetNotifyWindow(const std::string& monitor, NotifyCorner corner);
+  void SetAllowRuleSave(bool allowed);
 
   PluginSettings& EnsurePluginSettings(const std::string& plugin_id,
                                        sm::Span<const sm::SettingDef> schema,

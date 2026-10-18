@@ -490,6 +490,7 @@ void PluginSettings::Load(const std::string& plugin_id, const std::string& file_
           case sm::SettingType::Double: ReadDouble(*node, def, r, &value.d); break;
           case sm::SettingType::String: ReadString(*node, def, r, &value.s); break;
           case sm::SettingType::Enum:   ReadEnum(*node, def, r, &value.s); break;
+          case sm::SettingType::Sound:  ReadString(*node, def, r, &value.s); break;
         }
       }
 
@@ -801,11 +802,12 @@ ConfigStore::LoadResult ConfigStore::Load(const Paths& paths, bool read_only,
       app, "app", "notification_history_size",
       static_cast<std::int64_t>(sm::limits::kNotificationHistoryCapacity), 1,
       static_cast<std::int64_t>(sm::limits::kNotificationHistoryCapacity)));
+  config_.app.allow_rule_save = read_bool(app, "app", "allow_rule_save", false);
 
   WarnUnknownKeys(app, "app",
                   {"notify_log_level", "log_level", "log_retention_days",
                    "log_max_total_mb", "ui_font_size", "single_instance",
-                   "notification_history_size"},
+                   "notification_history_size", "allow_rule_save"},
                   &r);
 
   const toml::table* notify_window = nullptr;
@@ -1112,6 +1114,12 @@ void ConfigStore::SetNotificationHistorySize(std::int32_t size) {
   MarkDirty();
 }
 
+void ConfigStore::SetAllowRuleSave(bool allowed) {
+  if (config_.app.allow_rule_save == allowed) return;
+  config_.app.allow_rule_save = allowed;
+  MarkDirty();
+}
+
 PluginSettings& ConfigStore::EnsurePluginSettings(const std::string& plugin_id,
                                                   sm::Span<const sm::SettingDef> schema,
                                                   Diagnostics* out) {
@@ -1256,6 +1264,7 @@ bool ConfigStore::WriteConfigFile() {
   app.insert_or_assign("single_instance", config_.app.single_instance);
   app.insert_or_assign("notification_history_size",
                        static_cast<std::int64_t>(config_.app.notification_history_size));
+  app.insert_or_assign("allow_rule_save", config_.app.allow_rule_save);
   root.insert_or_assign("app", std::move(app));
 
   toml::table notify_window;
@@ -1328,6 +1337,7 @@ bool ConfigStore::WritePluginFile(PluginSettings& settings) {
         break;
       case sm::SettingType::String:
       case sm::SettingType::Enum:
+      case sm::SettingType::Sound:
         values.insert_or_assign(key, value.s);
         break;
     }
