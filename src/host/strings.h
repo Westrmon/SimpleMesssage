@@ -148,7 +148,18 @@ inline constexpr const char* kSecSettings = "设置";
 
 inline constexpr const char* kBulkEnableAll = "全部启用";
 inline constexpr const char* kBulkDisableAll = "全部禁用";
-inline constexpr const char* kNoPlugins = "没有发现任何插件。插件目录里放着 .dll 才会出现在这里。";
+inline constexpr const char* kNoPlugins =
+    "没有发现任何插件。插件目录里放着 .dll 才会出现在这里；放入后点"
+    "“重新扫描插件目录”即可加载。";
+inline constexpr const char* kReloadPlugins = "重新扫描插件目录";
+inline constexpr const char* kReloadPluginsHint =
+    "重新扫描插件目录。新出现的 DLL 会先校验再加载；校验失败的直接跳过并在"
+    "列表里标出原因。已经在运行的插件不受影响。";
+inline constexpr const char* kReloadPluginsOkFormat =
+    "重新扫描完成：%d 个 DLL，新增 %d 个（通过 %d、拒绝 %d），恢复 %d 个，"
+    "新加载 %d 个实例。";
+inline constexpr const char* kReloadPluginsNoChange = "重新扫描完成：没有发现新插件。";
+inline constexpr const char* kReloadPluginsFailedFormat = "重新扫描失败：%s";
 
 inline constexpr const char* kSettingRestartSuffix = "（重启后生效）";
 inline constexpr const char* kNoSettings = "这个插件没有声明任何设置项。";

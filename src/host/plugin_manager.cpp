@@ -59,6 +59,20 @@ bool EndsWithNoCase(const std::string& text, const char* suffix) {
   return EqualsNoCase(text.substr(text.size() - n), suffix);
 }
 
+std::string LowerAscii(const std::string& text) {
+  std::string result = text;
+  for (char& c : result) {
+    if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+  }
+  return result;
+}
+
+// 共享依赖不是插件。它们正常放在 exe 目录，但用户也可能顺手拷进插件目录，
+// 别让它们以"缺少导出符号"的形式污染统计。
+bool IsSharedDependency(const std::string& name) {
+  return EqualsNoCase(name, "sm_imgui.dll") || EqualsNoCase(name, "sm_curl.dll");
+}
+
 bool IsValidIdChar(char c) {
   return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '.' ||
          c == '-';
@@ -531,6 +545,8 @@ void PluginManager::SynchronizeInstances() {
                     instance.id.c_str(), instance.plugin.c_str());
       continue;
     }
+    // 运行时重新扫描会再次走到这里：已有记录的实例不能重复登记。
+    if (FindRecord(instance.id) != nullptr) continue;
 
     Record* const record = AddRecord(instance.id, *type);
     if (type->kind != sm::PluginKind::Source && instance.id != type->id) {
@@ -589,12 +605,7 @@ void PluginManager::Discover(const std::string& plugin_dir) {
 
   for (const util::DirEntry& entry : util::list_files(plugin_dir, nullptr)) {
     if (!EndsWithNoCase(entry.name, ".dll")) continue;
-    // 共享依赖不是插件。它们正常放在 exe 目录，但用户也可能顺手拷进插件目录，
-    // 别让它们以"缺少导出符号"的形式污染统计。
-    if (EqualsNoCase(entry.name, "sm_imgui.dll") ||
-        EqualsNoCase(entry.name, "sm_curl.dll")) {
-      continue;
-    }
+    if (IsSharedDependency(entry.name)) continue;
 
     const std::string stem = entry.name.substr(0, entry.name.size() - 4);
     PluginType* const type = AddType(stem, util::path_join(plugin_dir, entry.name));
@@ -609,6 +620,68 @@ void PluginManager::Discover(const std::string& plugin_dir) {
                 "实例 %d 个",
                 plugin_dir.c_str(), stats.scanned, stats.accepted, stats.rejected,
                 static_cast<int>(records_.size()));
+}
+
+ReloadResult PluginManager::ReloadPlugins() {
+  ReloadResult result;
+
+  if (!discovered_) {
+    result.error = "插件目录尚未完成首次扫描";
+    return result;
+  }
+  if (shutting_down_.load()) {
+    result.error = "宿主正在退出，不能再加载插件";
+    return result;
+  }
+
+  // 已知文件按 DLL 文件名（不含扩展名）索引。meta.id 可以换大小写，但文件名
+  // 在校验时已经确认与 meta.id 一致，所以这里是稳定的身份。
+  std::map<std::string, PluginType*> known;
+  for (const auto& holder : types_) {
+    known[LowerAscii(holder->file_stem)] = holder.get();
+  }
+
+  for (const util::DirEntry& entry : util::list_files(plugin_dir_, nullptr)) {
+    if (!EndsWithNoCase(entry.name, ".dll")) continue;
+    if (IsSharedDependency(entry.name)) continue;
+    ++result.scanned;
+
+    const std::string stem = entry.name.substr(0, entry.name.size() - 4);
+    const auto known_it = known.find(LowerAscii(stem));
+    if (known_it != known.end()) {
+      PluginType& type = *known_it->second;
+      if (type.valid) continue;  // 已加载或已登记的类型保持不动
+      // 被拒绝的类型当时已经卸载了模块；用户可能已经重新编译并替换了文件。
+      TryLoadAndValidateType(type);
+      if (type.valid) ++result.recovered;
+      continue;
+    }
+
+    ++result.added;
+    PluginType* const type = AddType(stem, util::path_join(plugin_dir_, entry.name));
+    TryLoadAndValidateType(*type);
+    if (type->valid) {
+      ++result.accepted;
+    } else {
+      // 校验失败的类型已经由 RejectType() 卸载并记录原因，这里直接跳过。
+      ++result.rejected;
+    }
+  }
+
+  // 新类型可能对上配置里原本"未安装"的实例；SynchronizeInstances 是幂等的。
+  const Stats before = SnapshotStats();
+  SynchronizeInstances();
+  LoadEnabled();
+  const Stats after = SnapshotStats();
+  result.instances_loaded = after.loaded - before.loaded;
+  result.ok = true;
+
+  smlog::Writef(sm::LogLevel::Info, "plugin",
+                "插件目录重新扫描：%d 个 DLL，新增 %d 个（通过 %d、拒绝 %d），"
+                "恢复 %d 个，新加载实例 %d 个",
+                result.scanned, result.added, result.accepted, result.rejected,
+                result.recovered, result.instances_loaded);
+  return result;
 }
 
 PluginManager::ValidationResult PluginManager::Validate(const PluginType& type,

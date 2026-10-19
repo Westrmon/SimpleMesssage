@@ -975,13 +975,15 @@ struct StartOutput {
 void MyNotifier::on_action(const sm::Notification& n, const char* action_id) {
   if (std::strcmp(action_id, "details") == 0) {
     m_detail = CopyOf(n);              // 自己拷一份，见 01-入门 §5.2
-    host()->set_view_title(n.title);
-    host()->request_ui_surface(0);     // 持续持有，直到 close_view()
+    host()->set_view_title(n.title);   // 宿主据此打开本插件的详情窗口
   }
 }
 ```
 
-宿主随后会在每一帧调用 `draw_view()`。
+宿主随后会在每一帧调用 `draw_view()`。**`set_view_title()` 本身就是详情表面的
+引用**：用户关掉窗口或插件调用 `close_view()` 时归还。不要用
+`request_ui_surface(0)` 来持有详情 —— 0 是钉住**通知表面**的永久引用，只有
+`close_view()` 能归还，那个调用是给"确实需要一直出帧的浮层"准备的。
 
 - **禁止阻塞、禁止同步 IO**。需要取完整内容的话，应当在 `start()` 时就把完整
   `content` 放进通知里；确实需要按需拉取的，请投递到自己的线程并立刻返回，

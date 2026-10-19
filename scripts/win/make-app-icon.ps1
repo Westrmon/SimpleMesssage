@@ -1,26 +1,7 @@
 ﻿# SimpleMessage — 由 logo.png 生成多尺寸应用图标（Windows）
-#
-# 【为什么要这一步】assets/logo.png 是一张大图，而 Windows 在三个地方要图标，
-# 要的尺寸各不相同：托盘 16/20/24、标题栏与任务栏 32/40、Alt+Tab 48、资源管理器
-# 大图标 256。只给一张 256 的图，系统就得在显示时把它缩到 16 —— 那一步的滤波
-# 结果比"按目标尺寸重画一次"差得多，托盘图标正好是最显眼的那一处。
-#
-# 【为什么要先裁边】assets/logo.png 是 1254×1254，而图形本身只占其中 778×801
-# —— 四周那一圈透明边占了画布的近四成。直接缩放等于把那圈空白一起搬进每个尺寸
-# 里：16px 的托盘图标上，真正的图案只剩 10px 左右，"图标太小"就是这么来的。
-# 所以先裁到 alpha 的实际边界，再补一点点边距，让图案填满画布。
-#
-# 用法（在仓库根目录下）：
-#   powershell -ExecutionPolicy Bypass -File scripts/win/make-app-icon.ps1
-# 参数：
-#   -Source <png>   默认 assets/logo.png
-#   -Out <ico>      默认 src/host/sm_host.ico
-#
-# 【产物要提交】生成的 .ico 是构建输入，不是每次构建都重做的东西：宿主图标不会
-# 因为源码变了而变化。换美术资源时重新跑一次这个脚本即可。
 
 param(
-  [string]$Source = 'assets/logo.png',
+  [string]$Source = 'assets/logo512x512.png',
   [string]$Out = 'src/host/sm_host.ico'
 )
 

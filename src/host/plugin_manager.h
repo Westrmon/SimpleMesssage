@@ -94,6 +94,17 @@ struct AddInstanceResult {
   std::string error;
 };
 
+struct ReloadResult {
+  bool        ok = false;
+  std::string error;
+  int         scanned = 0;      // 目录里的插件 DLL 数（不含共享依赖）
+  int         added = 0;        // 本次新发现的 DLL 数
+  int         accepted = 0;     // 新 DLL 中通过校验并登记的数
+  int         rejected = 0;     // 新 DLL 中未通过校验、被跳过的数
+  int         recovered = 0;    // 之前被拒绝、这次通过校验的类型数
+  int         instances_loaded = 0;  // 本次新创建并初始化的实例数
+};
+
 class IPluginEventSink {
  public:
   virtual ~IPluginEventSink() = default;
@@ -130,6 +141,11 @@ class PluginManager : public IPluginRunner,
   void SetEventSink(IPluginEventSink* sink);
 
   void Discover(const std::string& plugin_dir);
+
+  // 运行时重新扫描插件目录：新出现的 DLL 先校验再登记，校验失败的直接跳过；
+  // 之前被拒绝的类型会重试一次（用户可能已经修好并替换了文件）。
+  // 已通过校验的类型与正在运行的实例保持不变。
+  ReloadResult ReloadPlugins();
 
   void LoadEnabled();
 

@@ -1,6 +1,7 @@
 <p align="center">
-<img src="./assets/logo.png" alt="logo" width="220" height="220" />
+<img src="./assets/logo.svg" alt="logo" width="220" height="220" />
 </p>
+
 
 
 <h1 align="center">SimpleMessage</h1>

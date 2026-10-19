@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -23,8 +24,8 @@ using sm::StartOutput;
 using sm::StartResult;
 
 constexpr SettingDef kSettings[] = {
-    sm::setting::integer("toast_duration_sec", 5, 1, 120, "浮层驻留时间（秒）",
-                         "浮层出现后自动消失的时间。设为 0 不合法，最小 1 秒。"),
+    sm::setting::integer("toast_duration_sec", 5, 0, 120, "浮层驻留时间（秒）",
+                         "浮层出现后自动消失的时间。设为 0 时不会自动消失。"),
     sm::setting::integer("max_toasts", 3, 1, 10, "同时显示的最大浮层数",
                          "超出的通知只在面板的历史里出现，不弹浮层。"),
     sm::setting::integer("toast_width_min", 320, 200, 1200, "浮层最小宽度（像素）",
@@ -41,6 +42,13 @@ constexpr SettingDef kSettings[] = {
                          "等价于在浮层上点右键：收起这张浮层，并把宿主历史里的"
                          "那条标记为已读。"),
 };
+
+// 驻留时间为 0 的浮层是常驻的：宿主只按"最长引用"记账，所以在它还在屏幕上
+// 的每一帧都续租一小段，而不是用 request_ui_surface(0) —— 后者是不可自然到期
+// 的永久引用，只有 close_view() 能归还，会把通知表面钉死到插件卸载。
+constexpr std::int64_t kNeverExpiresMs =
+    std::numeric_limits<std::int64_t>::max();
+constexpr std::int64_t kPersistKeepAliveMs = 5 * 1000;
 
 constexpr PluginMeta kMeta = {
      "notifier.imgui",
@@ -114,12 +122,15 @@ class ImGuiNotifier final : public PluginBase {
     const std::int64_t hold_ms = DurationMs();
     Toast toast;
     toast.notice = CopyNotice(n);
-    toast.expire_unix_ms = host()->now_unix_ms() + hold_ms;
+    toast.expire_unix_ms =
+        (hold_ms > 0) ? (host()->now_unix_ms() + hold_ms) : kNeverExpiresMs;
 
     toasts_.push_back(std::move(toast));
     TrimToLimit();
 
-    if (hold_ms > 0) host()->request_ui_surface(hold_ms);
+    // 常驻浮层（0 秒）没有到期时刻：先让宿主把通知表面建起来，
+    // 之后由 draw_ui() 在它还在屏幕上时逐帧续租。
+    host()->request_ui_surface(hold_ms > 0 ? hold_ms : kPersistKeepAliveMs);
   }
 
   void on_action(const sm::Notification& n, const char* action_id) override {
@@ -137,7 +148,9 @@ class ImGuiNotifier final : public PluginBase {
 
       const std::string title = detail_.notice.title + " — 详情";
       host()->set_view_title(title.c_str());
-      host()->request_ui_surface(0);
+      // 详情窗口由 set_view_title() 的 [视图] 引用维持，不要再请求
+      // request_ui_surface(0)：那会把通知表面钉成永久引用，而且 close_view()
+      // 会把它连同常驻浮层的续租一起清掉。
       return;
     }
 
@@ -149,11 +162,19 @@ class ImGuiNotifier final : public PluginBase {
     if (host()->imgui_context() == nullptr) return;
 
     const std::int64_t now = host()->now_unix_ms();
-    while (!toasts_.empty() && toasts_.front().expire_unix_ms <= now) {
-      toasts_.erase(toasts_.begin());
+    // 常驻浮层永远排在最前面也不会到期，所以不能只看队首：
+    // 扫一遍，把中间所有已到期的限时浮层都收掉。
+    for (std::size_t i = toasts_.size(); i > 0; --i) {
+      if (toasts_[i - 1].expire_unix_ms <= now) {
+        toasts_.erase(toasts_.begin() + static_cast<std::ptrdiff_t>(i - 1));
+      }
     }
     TrimToLimit();
     if (toasts_.empty()) return;
+
+    // 还有常驻浮层：续租通知表面。最后一张被关掉后这里不再续租，
+    // 宿主会在 kPersistKeepAliveMs 到期后销毁这张表面。
+    if (HasPersistentToast()) host()->request_ui_surface(kPersistKeepAliveMs);
 
     const bool show_actions = host()->setting_bool("show_actions", true);
     const bool show_details = host()->setting_bool("show_details_button", true);
@@ -420,6 +441,13 @@ class ImGuiNotifier final : public PluginBase {
     return copy;
   }
 
+  bool HasPersistentToast() const {
+    for (const Toast& toast : toasts_) {
+      if (toast.expire_unix_ms == kNeverExpiresMs) return true;
+    }
+    return false;
+  }
+
   static bool HasDeclaredAction(const Toast& toast, const char* id) {
     for (const Button& button : toast.notice.buttons) {
       if (button.id == id) return true;
@@ -446,7 +474,7 @@ class ImGuiNotifier final : public PluginBase {
 
   std::int64_t DurationMs() {
     std::int64_t secs = host()->setting_int("toast_duration_sec", 5);
-    if (secs < 1) secs = 1;
+    if (secs < 0) secs = 0;  // 0 表示常驻：不自动消失
     return secs * 1000;
   }
 

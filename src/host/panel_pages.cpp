@@ -364,6 +364,28 @@ void UiPanel::DrawPluginsPage() {
   if (readonly) ImGui::BeginDisabled();
   if (ImGui::Button(strings::kAddInstance)) OpenAddInstancePopup(std::string());
   if (readonly) ImGui::EndDisabled();
+
+  ImGui::SameLine();
+  const bool safe_mode = setup_.host != nullptr && setup_.host->safe_mode();
+  if (safe_mode) ImGui::BeginDisabled();
+  const bool reload_clicked = ImGui::Button(strings::kReloadPlugins);
+  if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
+    ImGui::SetTooltip("%s", strings::kReloadPluginsHint);
+  }
+  if (safe_mode) ImGui::EndDisabled();
+  if (reload_clicked) {
+    const ReloadResult result = setup_.plugins->ReloadPlugins();
+    if (!result.ok) {
+      status_message_ = Fmt(strings::kReloadPluginsFailedFormat, result.error.c_str());
+    } else if (result.added == 0 && result.recovered == 0) {
+      status_message_ = strings::kReloadPluginsNoChange;
+    } else {
+      status_message_ = Fmt(strings::kReloadPluginsOkFormat, result.scanned, result.added,
+                            result.accepted, result.rejected, result.recovered,
+                            result.instances_loaded);
+    }
+  }
+
   ImGui::SameLine();
   if (ImGui::Button(strings::kBulkEnableAll)) set_all(true);
   ImGui::SameLine();
