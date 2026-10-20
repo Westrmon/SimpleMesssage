@@ -47,6 +47,7 @@ struct OwnedNotification {
   std::string              source_plugin;
   std::vector<OwnedAction> actions;
   sm::Level                level = sm::Level::Info;
+  std::int32_t             importance = 0;
   std::int64_t             time_unix_ms = 0;
   std::int64_t             seq = 0;
   bool                     read = false;

@@ -143,6 +143,8 @@ std::string NotificationJsonLine(const OwnedNotification& n) {
   line.push_back(',');
   AppendStringField(&line, "level", LevelKey(n.level));
   line.push_back(',');
+  AppendIntField(&line, "importance", n.importance);
+  line.push_back(',');
   AppendStringField(&line, "source_plugin", n.source_plugin);
   line.push_back(',');
   AppendStringField(&line, "topic", n.topic);
@@ -297,6 +299,9 @@ bool DrawNotificationDetail(const char* id_scope, const OwnedNotification& n,
                           sizeof(time_text));
   ImGui::TextDisabled("%s · %s", n.source_plugin.c_str(), time_text);
   if (!n.topic.empty()) ImGui::TextDisabled("%s", n.topic.c_str());
+  if (n.importance != 0) {
+    ImGui::TextDisabled("重要等级 %d", static_cast<int>(n.importance));
+  }
   if (!n.id.empty()) ImGui::TextDisabled("id=%s", n.id.c_str());
 
   ImGui::SeparatorText(strings::kDetailContent);

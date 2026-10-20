@@ -282,6 +282,8 @@ inline constexpr const char* kRuleRewriteTitleFormat = "title = %s";
 inline constexpr const char* kRuleRewriteContentFormat = "content = %s";
 inline constexpr const char* kRuleRewriteSummaryFormat = "summary = %s";
 inline constexpr const char* kRuleRewriteLevelFormat = "level = %s";
+inline constexpr const char* kRuleRewriteImportanceFormat = "importance = %d";
+inline constexpr const char* kRuleRewriteTimeFormat = "time = %s";
 inline constexpr const char* kRuleSaveEnabled = "保存：已启用";
 inline constexpr const char* kRuleSaveDisabled = "保存：未启用";
 inline constexpr const char* kRuleSaveDefaultPath =

@@ -58,6 +58,7 @@ void OwnedNotification::RebuildView() {
   view.summary = summary.c_str();
   view.topic = topic.c_str();
   view.level = level;
+  view.importance = importance;
   view.time_unix_ms = time_unix_ms;
   view.id = id.empty() ? nullptr : id.c_str();
   view.url = url.empty() ? nullptr : url.c_str();
@@ -107,6 +108,8 @@ void NotificationPipeline::SaveRuleHit(const RuleSet& rules,
   view.content = hit.content.c_str();
   view.summary = hit.summary.c_str();
   view.level = hit.level;
+  view.importance = hit.importance;
+  view.time_unix_ms = hit.time_unix_ms;
   sink->Save(rule, view, delivery_phase, notifier_id);
 }
 
@@ -141,6 +144,7 @@ bool NotificationPipeline::Admit(const std::string& source_plugin,
   owned.url = CopyField(src.url, sm::limits::kMaxUrlBytes, "url", source_plugin);
   owned.icon = CopyField(src.icon, sm::limits::kMaxIconBytes, "icon", source_plugin);
   owned.level = src.level;
+  owned.importance = src.importance;
   owned.time_unix_ms = src.time_unix_ms;
 
   if (src.actions.data != nullptr) {
@@ -177,7 +181,7 @@ bool NotificationPipeline::Admit(const std::string& source_plugin,
   const std::shared_ptr<RuleSet> rules = RulesSnapshot();
   if (rules != nullptr && !rules->empty()) {
     RuleFields fields(owned.title, owned.content, owned.summary, owned.topic,
-                      owned.level);
+                      owned.level, owned.importance, owned.time_unix_ms);
     RuleDiagnostics warnings;
     RuleSaveHits save_hits;
     const bool keep = rules->ApplySource(&fields, source_plugin, &warnings,
@@ -224,6 +228,8 @@ bool NotificationPipeline::Admit(const std::string& source_plugin,
       owned.summary = NormalizeSummary(owned.summary);
     }
     if (fields.has_level()) owned.level = fields.level();
+    if (fields.has_importance()) owned.importance = fields.importance();
+    if (fields.has_time()) owned.time_unix_ms = fields.time_unix_ms();
   }
 
   if (owned.title.empty() || owned.content.empty() || owned.topic.empty()) {
@@ -331,7 +337,8 @@ std::size_t NotificationPipeline::PumpMainThread(std::size_t max_items) {
       for (const std::string& id : matched) {
         // ---- 投递趟规则：只影响本次 Deliver 的视图，历史保持原样 ----
         if (has_delivery_rules) {
-          RuleFields fields(n.title, n.content, n.summary, n.topic, n.level);
+          RuleFields fields(n.title, n.content, n.summary, n.topic, n.level,
+                            n.importance, n.time_unix_ms);
           RuleDiagnostics warnings;
           RuleSaveHits save_hits;
           const bool keep = rules->ApplyDelivery(
@@ -361,6 +368,8 @@ std::size_t NotificationPipeline::PumpMainThread(std::size_t max_items) {
             view.content = content.c_str();
             view.summary = summary.c_str();
             view.level = fields.level();
+            view.importance = fields.importance();
+            view.time_unix_ms = fields.time_unix_ms();
             if (delivery->Deliver(id, view)) delivered = true;
             continue;
           }

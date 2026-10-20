@@ -58,6 +58,8 @@ struct RuleSaveHit {
   std::string content;
   std::string summary;
   sm::Level   level = sm::Level::Info;
+  std::int32_t importance = 0;
+  std::int64_t time_unix_ms = 0;
 };
 
 using RuleSaveHits = std::vector<RuleSaveHit>;
@@ -77,12 +79,15 @@ struct RuleCounters {
 class RuleFields {
  public:
   RuleFields(const std::string& title, const std::string& content,
-             const std::string& summary, const std::string& topic, sm::Level level)
+             const std::string& summary, const std::string& topic, sm::Level level,
+             std::int32_t importance = 0, std::int64_t time_unix_ms = 0)
       : title_src_(&title),
         content_src_(&content),
         summary_src_(&summary),
         topic_src_(&topic),
-        level_(level) {}
+        level_(level),
+        importance_(importance),
+        time_unix_ms_(time_unix_ms) {}
 
   std::string_view title() const {
     return has_title_ ? std::string_view(title_buf_) : std::string_view(*title_src_);
@@ -98,6 +103,8 @@ class RuleFields {
   std::string_view topic() const { return std::string_view(*topic_src_); }
 
   sm::Level level() const { return level_; }
+  std::int32_t importance() const { return importance_; }
+  std::int64_t time_unix_ms() const { return time_unix_ms_; }
 
   void SetTitle(std::string value) {
     title_buf_ = std::move(value);
@@ -115,15 +122,26 @@ class RuleFields {
     level_ = value;
     has_level_ = true;
   }
+  void SetImportance(std::int32_t value) {
+    importance_ = value;
+    has_importance_ = true;
+  }
+  void SetTime(std::int64_t value) {
+    time_unix_ms_ = value;
+    has_time_ = true;
+  }
 
   bool changed() const {
-    return has_title_ || has_content_ || has_summary_ || has_level_;
+    return has_title_ || has_content_ || has_summary_ || has_level_ ||
+           has_importance_ || has_time_;
   }
 
   bool               has_title() const { return has_title_; }
   bool               has_content() const { return has_content_; }
   bool               has_summary() const { return has_summary_; }
   bool               has_level() const { return has_level_; }
+  bool               has_importance() const { return has_importance_; }
+  bool               has_time() const { return has_time_; }
   const std::string& title_buffer() const { return title_buf_; }
   const std::string& content_buffer() const { return content_buf_; }
   const std::string& summary_buffer() const { return summary_buf_; }
@@ -141,8 +159,12 @@ class RuleFields {
   bool        has_content_ = false;
   bool        has_summary_ = false;
   bool        has_level_ = false;
+  bool        has_importance_ = false;
+  bool        has_time_ = false;
 
   sm::Level level_ = sm::Level::Info;
+  std::int32_t importance_ = 0;
+  std::int64_t time_unix_ms_ = 0;
 };
 
 struct Rule {
@@ -161,10 +183,15 @@ struct Rule {
   bool        has_content = false;
   bool        has_summary = false;
   bool        has_level = false;
+  bool        has_importance = false;
+  bool        has_time = false;
   std::string title_template;
   std::string content_template;
   std::string summary_template;
+  // time 模板先展开成字符串，再交给 ParseNotificationTime() 解析。
+  std::string time_template;
   sm::Level   level = sm::Level::Info;
+  std::int32_t importance = 0;
 
   bool drop = false;
   bool handle = false;
@@ -180,7 +207,8 @@ struct Rule {
   bool auto_only_if_empty = true;
 
   bool has_rewrite() const {
-    return has_title || has_content || has_summary || has_level;
+    return has_title || has_content || has_summary || has_level ||
+           has_importance || has_time;
   }
 
   struct Compiled;

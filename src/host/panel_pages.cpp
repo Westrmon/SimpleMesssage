@@ -977,6 +977,14 @@ void UiPanel::DrawRulesPage() {
           ImGui::TextWrapped(strings::kRuleRewriteLevelFormat,
                              strings::LevelText(rule.level));
         }
+        if (rule.has_importance) {
+          ImGui::TextWrapped(strings::kRuleRewriteImportanceFormat,
+                             static_cast<int>(rule.importance));
+        }
+        if (rule.has_time) {
+          ImGui::TextWrapped(strings::kRuleRewriteTimeFormat,
+                             rule.time_template.c_str());
+        }
       } else {
         ImGui::TextDisabled("%s", strings::kRuleNoRewrite);
       }

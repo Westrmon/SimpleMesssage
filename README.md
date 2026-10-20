@@ -304,7 +304,7 @@ SM_DEFINE_PLUGIN(kMeta, Example);
 |---|---|
 | `sm::PluginKind` | `Source` / `Notifier` |
 | `sm::StartResult` | `Ok` / `Empty` / `Error` / `Abort` / `Cancelled` |
-| `sm::Notification` | `title` / `content` / `summary` / `topic` / `level` / `time_unix_ms` / `id` / `url` / `icon` / `actions` / `source_plugin` / `seq` |
+| `sm::Notification` | `title` / `content` / `summary` / `topic` / `level` / `importance` / `time_unix_ms` / `id` / `url` / `icon` / `actions` / `source_plugin` / `seq` |
 | `sm::Level` | `Debug` / `Info` / `Warning` / `Error` / `Critical` |
 | `sm::PluginMeta` | 插件 id、版本、类别、宿主版本范围、订阅、设置 schema、API 版本 |
 | `sm::SettingDef` | 设置项 schema；用 `sm::setting::boolean/integer/number/text/enumeration/sound` 构造 |

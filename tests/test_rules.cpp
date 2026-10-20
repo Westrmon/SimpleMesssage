@@ -8,6 +8,7 @@
 #include <memory>
 #include <string>
 
+#include "host/rule_time.h"
 #include "host/rules.h"
 #include "sm/summary.h"
 
@@ -287,6 +288,88 @@ summary = "来自 $topic.0"
   SM_CHECK(Apply(parsed.set.get(), &fields, "s"));
   SM_CHECK(fields.level() == sm::Level::Critical);
   SM_CHECK_TEXT(std::string(fields.summary()), "来自 alarm");
+}
+
+SM_TEST(rules_rewrite, importance_and_time_from_capture) {
+  Parsed parsed = ParseRules(R"RULES(
+schema_version = 1
+[[rules]]
+id = "r"
+match = 'content =~ "发布时间(?:：|:)\s*(\d{4}/\d{1,2}/\d{1,2}\s+\d{1,2}:\d{2}:\d{2})"'
+[rules.rewrite]
+importance = 4
+time = "$content.1"
+)RULES");
+  SM_CHECK_INT(parsed.set->size(), 1);
+
+  std::string title = "t";
+  std::string content = "发布时间：2026/10/20 12:34:56";
+  std::string summary;
+  std::string topic;
+  RuleFields fields(title, content, summary, topic, sm::Level::Info, 0, 111);
+  SM_CHECK(Apply(parsed.set.get(), &fields, "s"));
+
+  std::int64_t expected = 0;
+  SM_CHECK(sm::host::ParseNotificationTime("2026/10/20 12:34:56", &expected));
+  SM_CHECK(fields.changed());
+  SM_CHECK(fields.has_importance());
+  SM_CHECK_INT(fields.importance(), 4);
+  SM_CHECK(fields.has_time());
+  SM_CHECK_INT(fields.time_unix_ms(), expected);
+}
+
+SM_TEST(rules_rewrite, invalid_time_keeps_original_and_warns) {
+  Parsed parsed = ParseRules(R"(
+schema_version = 1
+[[rules]]
+id = "r"
+match = 'content =~ "^(.+)$"'
+[rules.rewrite]
+time = "$content.1"
+)");
+  SM_CHECK_INT(parsed.set->size(), 1);
+
+  std::string title;
+  std::string content = "这里没有时间";
+  std::string summary;
+  std::string topic;
+  RuleFields fields(title, content, summary, topic, sm::Level::Info, 0, 111);
+  RuleDiagnostics warnings;
+  SM_CHECK(parsed.set->ApplySource(&fields, "s", &warnings));
+  SM_CHECK(!fields.has_time());
+  SM_CHECK_INT(fields.time_unix_ms(), 111);
+  SM_CHECK(HasMessage(warnings, "无法识别为时间"));
+}
+
+SM_TEST(rules_save, snapshot_carries_rewritten_importance_and_time) {
+  Parsed parsed = ParseRules(R"(
+schema_version = 1
+[[rules]]
+id = "r"
+match = 'title =~ "^(.*)$"'
+[rules.rewrite]
+importance = 2
+time = "2026-10-20 12:34:56"
+[rules.save]
+enabled = true
+)");
+  SM_CHECK_INT(parsed.set->size(), 1);
+
+  std::string title = "t";
+  std::string content = "body";
+  std::string summary;
+  std::string topic;
+  RuleFields fields(title, content, summary, topic, sm::Level::Info, 0, 111);
+  sm::host::RuleSaveHits hits;
+  RuleDiagnostics warnings;
+  SM_CHECK(parsed.set->ApplySource(&fields, "s", &warnings, &hits));
+  SM_CHECK_INT(hits.size(), 1);
+  if (hits.size() == 1) {
+    std::int64_t expected = 0;
+    SM_CHECK(sm::host::ParseNotificationTime("2026-10-20 12:34:56", &expected));
+    SM_CHECK_INT(hits[0].importance, 2);
+    SM_CHECK_INT(hits[0].time_unix_ms, expected);
+  }
 }
 
 SM_TEST(rules_rewrite, template_group_out_of_range_skips_rule) {

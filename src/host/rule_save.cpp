@@ -112,6 +112,7 @@ std::string BuildBlock(const Rule& rule, const sm::Notification& view,
   AppendField(&block, "time", FormatTime(time_ms));
   if (view.seq > 0) AppendField(&block, "seq", std::to_string(view.seq));
   AppendField(&block, "level", LevelToken(view.level));
+  AppendField(&block, "importance", std::to_string(view.importance));
   AppendField(&block, "source", OneLine(view.source_plugin));
   AppendField(&block, "topic", OneLine(view.topic));
   if (view.id != nullptr && view.id[0] != '\0') {

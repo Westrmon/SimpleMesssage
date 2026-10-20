@@ -69,6 +69,14 @@ struct Notification {
 
   // 宿主分配的单调递增序号（从 1 开始），用于 Notifier 判断"这条是不是新到的"。
   std::int64_t seq = 0;
+
+  // 重要等级。与 level 是两套独立概念：
+  //   - level 决定"怎么打扰用户"（提示音、颜色、界面样式）；
+  //   - importance 是给 Notifier 的数值策略输入，例如浮层驻留时长。
+  // 约定 0 = 未指定；1–5 为由低到高的推荐档位。宿主不做范围裁剪，
+  // 规则可以用 rewrite.importance 改写；Notifier 应把不认识的数值
+  // 回退到自己的默认策略，而不是报错。
+  std::int32_t importance = 0;
 };
 
 }  // namespace sm

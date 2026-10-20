@@ -27,7 +27,7 @@
 | # | 概念 | 载体 | 取值示例 | 谁检查 |
 |---|---|---|---|---|
 | 1 | **宿主版本** | `SM_VERSION_STRING`、`IHostContext::host_version()` | `"0.1.0"` | 人看 |
-| 2 | **API / ABI 版本** | `SM_API_VERSION`、`sm_abi_version()`、`PluginMeta::api_version` | `2` | 宿主加载时**精确匹配** |
+| 2 | **API / ABI 版本** | `SM_API_VERSION`、`sm_abi_version()`、`PluginMeta::api_version` | `3` | 宿主加载时**精确匹配** |
 | 3 | **插件自身版本** | `PluginMeta::version` | `"1.3.0"` | 宿主不解释 |
 | 4 | **兼容范围** | `PluginMeta::host_range` | `">=0.1.0,<1.0.0"` | 宿主用 §9 的规则判定 |
 
@@ -272,7 +272,7 @@ static constexpr auto kSubsSpan = sm::span_of(kSubs);
 #define SM_VERSION_PATCH 0
 #define SM_VERSION_STRING "0.1.0"
 #define SM_VERSION_DETAIL "v0.1.0"   // git describe 的完整结果
-#define SM_API_VERSION 2
+#define SM_API_VERSION 3
 
 namespace sm { inline constexpr std::int32_t kApiVersion = SM_API_VERSION; }
 ```
@@ -380,8 +380,9 @@ Action 时，它不会再画一个重复的按钮。
 | 字段 | 必填 | 说明 |
 |---|---|---|
 | `topic` | ✔ | 点分小写标识，如 `"mail.inbox"`。支持父级前缀匹配。`"sm."` 前缀为宿主保留 |
-| `level` | ✔ | 默认 `Level::Info` |
-| `time_unix_ms` | ✔ | Unix 毫秒（UTC）。宿主**不做校正**，插件必须填真实时间 |
+| `level` | ✔ | 默认 `Level::Info`。决定提示音与界面样式 |
+| `importance` | ✘ | 整数，默认 `0`。与 `level` **独立**：它只给 Notifier 提供数值化的策略输入（例如浮层驻留时长）。约定 `0` = 未指定，`1–5` = 由低到高的推荐档位；宿主不解释、也不裁剪数值，Notifier 应把不认识的等级回退到自己的默认策略。规则可以用 `rewrite.importance` 改写 |
+| `time_unix_ms` | ✔ | Unix 毫秒（UTC）。宿主**不做校正**，插件必须填真实时间；规则可以用 `rewrite.time` 从正文里提取并改写 |
 
 #### 可选字段
 

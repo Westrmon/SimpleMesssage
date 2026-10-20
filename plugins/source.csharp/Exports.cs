@@ -112,6 +112,9 @@ public sealed class Notification
     public string? Topic { get; set; }
     public Level Level { get; set; } = Level.Info;
 
+    // 重要等级：供 Notifier 决定浮层驻留时间等策略。0 = 未指定，1–5 为推荐档位。
+    public int Importance { get; set; }
+
     // 为 null 时由边界层填入 host.NowUnixMs。
     public long? TimeUnixMs { get; set; }
 
@@ -224,6 +227,7 @@ internal unsafe struct SmNotification
     public SmSpan<SmAction> Actions;
     public byte* SourcePlugin;
     public long Seq;
+    public int Importance;
 }
 
 [StructLayout(LayoutKind.Sequential)]
@@ -746,6 +750,7 @@ internal static unsafe class NativeExports
     {
         *destination = default;
         destination->Level = source.Level;
+        destination->Importance = source.Importance;
         destination->TimeUnixMs = source.TimeUnixMs ?? host.NowUnixMs;
 
         if (!TryCopyString(host, source.Title, 256, out byte* title)) return false;
@@ -844,6 +849,7 @@ internal static unsafe class NativeExports
             Summary = Utf8ToString(source->Summary),
             Topic = Utf8ToString(source->Topic),
             Level = source->Level,
+            Importance = source->Importance,
             TimeUnixMs = source->TimeUnixMs,
             Id = Utf8ToString(source->Id),
             Url = Utf8ToString(source->Url),

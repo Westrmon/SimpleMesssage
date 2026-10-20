@@ -19,8 +19,10 @@ if(SM_HAVE_TOMLPP)
         main.cpp
         test_framework.cpp
         test_rules.cpp
+        test_rule_time.cpp
         test_placeholders.cpp
         "${CMAKE_SOURCE_DIR}/src/host/rules.cpp"
+        "${CMAKE_SOURCE_DIR}/src/host/rule_time.cpp"
         "${CMAKE_SOURCE_DIR}/src/host/placeholders.cpp"
     )
 

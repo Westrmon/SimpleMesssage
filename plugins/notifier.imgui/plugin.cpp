@@ -24,8 +24,23 @@ using sm::StartOutput;
 using sm::StartResult;
 
 constexpr SettingDef kSettings[] = {
-    sm::setting::integer("toast_duration_sec", 5, 0, 120, "浮层驻留时间（秒）",
-                         "浮层出现后自动消失的时间。设为 0 时不会自动消失。"),
+    sm::setting::integer("toast_duration_sec", 5, 0, 120, "默认浮层驻留时间（秒）",
+                         "重要等级没有单独配置时使用。设为 0 时不会自动消失。"),
+    sm::setting::integer("toast_duration_importance_1", -1, -1, 120,
+                         "重要等级 1 的驻留时间（秒）",
+                         "覆盖默认值；-1 表示使用默认值，0 表示常驻。"),
+    sm::setting::integer("toast_duration_importance_2", -1, -1, 120,
+                         "重要等级 2 的驻留时间（秒）",
+                         "覆盖默认值；-1 表示使用默认值，0 表示常驻。"),
+    sm::setting::integer("toast_duration_importance_3", -1, -1, 120,
+                         "重要等级 3 的驻留时间（秒）",
+                         "覆盖默认值；-1 表示使用默认值，0 表示常驻。"),
+    sm::setting::integer("toast_duration_importance_4", -1, -1, 120,
+                         "重要等级 4 的驻留时间（秒）",
+                         "覆盖默认值；-1 表示使用默认值，0 表示常驻。"),
+    sm::setting::integer("toast_duration_importance_5", -1, -1, 120,
+                         "重要等级 5 的驻留时间（秒）",
+                         "覆盖默认值；-1 表示使用默认值，0 表示常驻。"),
     sm::setting::integer("max_toasts", 3, 1, 10, "同时显示的最大浮层数",
                          "超出的通知只在面板的历史里出现，不弹浮层。"),
     sm::setting::integer("toast_width_min", 320, 200, 1200, "浮层最小宽度（像素）",
@@ -119,9 +134,12 @@ class ImGuiNotifier final : public PluginBase {
     if (n.seq <= last_seq_) return;
     last_seq_ = n.seq;
 
-    const std::int64_t hold_ms = DurationMs();
+    const std::int64_t hold_ms = DurationMs(n.importance);
     Toast toast;
     toast.notice = CopyNotice(n);
+    // 到期时刻按“收到这条通知”的当下算，而不是按 n.time_unix_ms 算。
+    // 规则可以把 time 重写成通知源里的真实时刻；如果是几小时前的存量
+    // 通知，按真实时刻算会让浮层一出现就过期。
     toast.expire_unix_ms =
         (hold_ms > 0) ? (host()->now_unix_ms() + hold_ms) : kNeverExpiresMs;
 
@@ -284,6 +302,9 @@ class ImGuiNotifier final : public PluginBase {
     ImGui::SameLine();
     ImGui::TextDisabled("%s · %s", notice.topic.c_str(),
                         AgoText(host()->now_unix_ms(), notice.time_unix_ms).c_str());
+    if (notice.importance != 0) {
+      ImGui::TextDisabled("重要等级 %d", static_cast<int>(notice.importance));
+    }
     ImGui::Separator();
 
     const IconView icon = FetchIcon(notice.icon);
@@ -335,6 +356,7 @@ class ImGuiNotifier final : public PluginBase {
   struct NoticeCopy {
     std::int64_t seq = 0;
     sm::Level level = sm::Level::Info;
+    std::int32_t importance = 0;
     std::int64_t time_unix_ms = 0;
     std::string topic;
     std::string title;
@@ -422,6 +444,7 @@ class ImGuiNotifier final : public PluginBase {
     NoticeCopy copy;
     copy.seq = n.seq;
     copy.level = n.level;
+    copy.importance = n.importance;
     copy.time_unix_ms = n.time_unix_ms;
     copy.topic = CopyOrEmpty(n.topic);
     copy.title = CopyOrEmpty(n.title);
@@ -472,9 +495,25 @@ class ImGuiNotifier final : public PluginBase {
     return range;
   }
 
-  std::int64_t DurationMs() {
-    std::int64_t secs = host()->setting_int("toast_duration_sec", 5);
+  static const char* ImportanceDurationSetting(std::int32_t importance) {
+    switch (importance) {
+      case 1: return "toast_duration_importance_1";
+      case 2: return "toast_duration_importance_2";
+      case 3: return "toast_duration_importance_3";
+      case 4: return "toast_duration_importance_4";
+      case 5: return "toast_duration_importance_5";
+      default: return nullptr;
+    }
+  }
+
+  std::int64_t DurationMs(std::int32_t importance) {
+    std::int64_t secs = -1;
+    if (const char* setting = ImportanceDurationSetting(importance)) {
+      secs = host()->setting_int(setting, -1);
+    }
+    if (secs < 0) secs = host()->setting_int("toast_duration_sec", 5);
     if (secs < 0) secs = 0;  // 0 表示常驻：不自动消失
+    if (secs > 120) secs = 120;
     return secs * 1000;
   }
 

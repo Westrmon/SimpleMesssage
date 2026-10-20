@@ -19,7 +19,7 @@
 #define SM_VERSION_DETAIL SM_VERSION_STRING
 #endif
 
-#define SM_API_VERSION 2
+#define SM_API_VERSION 3
 
 namespace sm {
 inline constexpr std::int32_t kApiVersion = SM_API_VERSION;

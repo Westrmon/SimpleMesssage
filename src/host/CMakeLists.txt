@@ -24,6 +24,7 @@ add_executable(sm_host
     scheduler.cpp
     router.cpp
     rules.cpp
+    rule_time.cpp
     placeholders.cpp
     rule_save.cpp
     notification_pipeline.cpp

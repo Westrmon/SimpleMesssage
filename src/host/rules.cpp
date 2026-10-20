@@ -22,6 +22,7 @@
 
 #include "host/placeholders.h"
 #include "host/plugin_id.h"
+#include "host/rule_time.h"
 
 #include <toml.hpp>
 
@@ -577,6 +578,7 @@ struct Rule::Compiled {
   CompiledTemplate title;
   CompiledTemplate content;
   CompiledTemplate summary;
+  CompiledTemplate time;
 };
 
 struct RuleSet::Runtime {
@@ -585,6 +587,8 @@ struct RuleSet::Runtime {
   std::atomic<std::int64_t>  blocked{0};
   std::atomic<bool>          warned_missing_capture{false};
   std::atomic<bool>          warned_empty_rewrite{false};
+  std::atomic<bool>          warned_invalid_time{false};
+  std::atomic<bool>          warned_empty_time{false};
 };
 
 namespace {
@@ -791,7 +795,9 @@ bool BuildRule(const toml::table& table, std::size_t index,
         return false;
       }
       WarnUnknownRuleKeys(*rewrite, prefix + " 的 rewrite",
-                          {"title", "content", "summary", "level"}, diagnostics);
+                          {"title", "content", "summary", "level",
+                           "importance", "time"},
+                          diagnostics);
 
       const auto read_template = [&](const char* key, bool* has,
                                      std::string* text) -> bool {
@@ -809,7 +815,8 @@ bool BuildRule(const toml::table& table, std::size_t index,
       };
       if (!read_template("title", &rule.has_title, &rule.title_template) ||
           !read_template("content", &rule.has_content, &rule.content_template) ||
-          !read_template("summary", &rule.has_summary, &rule.summary_template)) {
+          !read_template("summary", &rule.has_summary, &rule.summary_template) ||
+          !read_template("time", &rule.has_time, &rule.time_template)) {
         return false;
       }
 
@@ -838,6 +845,23 @@ bool BuildRule(const toml::table& table, std::size_t index,
           return false;
         }
         rule.has_level = true;
+      }
+
+      if (const toml::node* importance_node = rewrite->get("importance")) {
+        const auto* importance_value = importance_node->as_integer();
+        if (importance_value == nullptr) {
+          AddDiag(diagnostics, RuleDiagnostic::Severity::Warn,
+                  prefix + " 的 rewrite.importance 不是整数，已跳过");
+          return false;
+        }
+        const std::int64_t value = importance_value->get();
+        if (value < INT32_MIN || value > INT32_MAX) {
+          AddDiag(diagnostics, RuleDiagnostic::Severity::Warn,
+                  prefix + " 的 rewrite.importance 超出 int32 范围，已跳过");
+          return false;
+        }
+        rule.importance = static_cast<std::int32_t>(value);
+        rule.has_importance = true;
       }
     }
 
@@ -947,6 +971,14 @@ bool BuildRule(const toml::table& table, std::size_t index,
                        &compiled->summary, &error)) {
       AddDiag(diagnostics, RuleDiagnostic::Severity::Warn,
               prefix + " 的 rewrite.summary 模板无效：" + error + "，已跳过");
+      return false;
+    }
+    if (rule.has_time &&
+        !BuildTemplate(rule.time_template, kFieldTitle,
+                       compiled->positive_count, compiled->group_count,
+                       &compiled->time, &error)) {
+      AddDiag(diagnostics, RuleDiagnostic::Severity::Warn,
+              prefix + " 的 rewrite.time 模板无效：" + error + "，已跳过");
       return false;
     }
   } else {
@@ -1207,7 +1239,88 @@ void AddSaveHit(const Rule& rule, std::size_t index, const RuleFields& fields,
   hit.content = std::string(fields.content());
   hit.summary = std::string(fields.summary());
   hit.level = fields.level();
+  hit.importance = fields.importance();
+  hit.time_unix_ms = fields.time_unix_ms();
   save_hits->push_back(std::move(hit));
+}
+
+struct RewriteWarningFlags {
+  std::atomic<bool>* missing_capture = nullptr;
+  std::atomic<bool>* empty_rewrite = nullptr;
+  std::atomic<bool>* invalid_time = nullptr;
+  std::atomic<bool>* empty_time = nullptr;
+};
+
+// 应用一条规则自己的 rewrite。title/content/summary 的空结果保留原值；
+// summary 允许清空。time 先展开模板再解析，解析失败保留原时间。
+void ApplyRewrite(const Rule& rule, EvalContext* context, RuleFields* fields,
+                  const RewriteWarningFlags& flags,
+                  RuleDiagnostics* runtime_warnings) {
+  bool missing_capture = false;
+  std::string new_title;
+  std::string new_content;
+  std::string new_summary;
+  std::string new_time_text;
+
+  if (rule.has_title) {
+    new_title = ExpandTemplate(rule.compiled->title, context, &missing_capture);
+  }
+  if (rule.has_content) {
+    new_content =
+        ExpandTemplate(rule.compiled->content, context, &missing_capture);
+  }
+  if (rule.has_summary) {
+    new_summary =
+        ExpandTemplate(rule.compiled->summary, context, &missing_capture);
+  }
+  if (rule.has_time) {
+    new_time_text =
+        ExpandTemplate(rule.compiled->time, context, &missing_capture);
+  }
+
+  if (missing_capture) {
+    WarnOnce(flags.missing_capture, runtime_warnings,
+             "规则 " + rule.id +
+                 " 的模板引用了未参与求值的字段捕获组，替换为空");
+  }
+
+  if (rule.has_title) {
+    if (new_title.empty()) {
+      WarnOnce(flags.empty_rewrite, runtime_warnings,
+               "规则 " + rule.id + " 把 title 重写为空，已保留原值");
+    } else {
+      fields->SetTitle(std::move(new_title));
+    }
+  }
+  if (rule.has_content) {
+    if (new_content.empty()) {
+      WarnOnce(flags.empty_rewrite, runtime_warnings,
+               "规则 " + rule.id + " 把 content 重写为空，已保留原值");
+    } else {
+      fields->SetContent(std::move(new_content));
+    }
+  }
+  if (rule.has_summary) {
+    fields->SetSummary(std::move(new_summary));
+  }
+  if (rule.has_level) fields->SetLevel(rule.level);
+  if (rule.has_importance) fields->SetImportance(rule.importance);
+  if (rule.has_time) {
+    if (new_time_text.empty()) {
+      WarnOnce(flags.empty_time, runtime_warnings,
+               "规则 " + rule.id + " 的 rewrite.time 展开为空，已保留原时间");
+    } else {
+      std::int64_t parsed_ms = 0;
+      if (!ParseNotificationTime(new_time_text, &parsed_ms)) {
+        const std::string sample = new_time_text.substr(0, 80);
+        WarnOnce(flags.invalid_time, runtime_warnings,
+                 "规则 " + rule.id + " 的 rewrite.time \"" + sample +
+                     "\" 无法识别为时间，已保留原时间");
+      } else {
+        fields->SetTime(parsed_ms);
+      }
+    }
+  }
 }
 
 }  // namespace
@@ -1249,52 +1362,12 @@ bool RuleSet::ApplySource(RuleFields* fields, const std::string& source_plugin,
     }
 
     if (rule.has_rewrite()) {
-      bool missing_capture = false;
-      std::string new_title;
-      std::string new_content;
-      std::string new_summary;
-
-      if (rule.has_title) {
-        new_title = ExpandTemplate(rule.compiled->title, &context,
-                                   &missing_capture);
-      }
-      if (rule.has_content) {
-        new_content = ExpandTemplate(rule.compiled->content, &context,
-                                     &missing_capture);
-      }
-      if (rule.has_summary) {
-        new_summary = ExpandTemplate(rule.compiled->summary, &context,
-                                     &missing_capture);
-      }
-
-      if (missing_capture) {
-        WarnOnce(&runtime.warned_missing_capture, runtime_warnings,
-                 "规则 " + rule.id +
-                     " 的模板引用了未参与求值的字段捕获组，替换为空");
-      }
-
-      if (rule.has_title) {
-        if (new_title.empty()) {
-          WarnOnce(&runtime.warned_empty_rewrite, runtime_warnings,
-                   "规则 " + rule.id +
-                       " 把 title 重写为空，已保留原值");
-        } else {
-          fields->SetTitle(std::move(new_title));
-        }
-      }
-      if (rule.has_content) {
-        if (new_content.empty()) {
-          WarnOnce(&runtime.warned_empty_rewrite, runtime_warnings,
-                   "规则 " + rule.id +
-                       " 把 content 重写为空，已保留原值");
-        } else {
-          fields->SetContent(std::move(new_content));
-        }
-      }
-      if (rule.has_summary) {
-        fields->SetSummary(std::move(new_summary));
-      }
-      if (rule.has_level) fields->SetLevel(rule.level);
+      ApplyRewrite(rule, &context, fields,
+                   {&runtime.warned_missing_capture,
+                    &runtime.warned_empty_rewrite,
+                    &runtime.warned_invalid_time,
+                    &runtime.warned_empty_time},
+                   runtime_warnings);
     }
 
     AddSaveHit(rule, i, *fields, save_hits);
@@ -1328,52 +1401,12 @@ bool RuleSet::ApplyDelivery(RuleFields* fields, const std::string& source_plugin
     }
 
     if (rule.has_rewrite()) {
-      bool missing_capture = false;
-      std::string new_title;
-      std::string new_content;
-      std::string new_summary;
-
-      if (rule.has_title) {
-        new_title = ExpandTemplate(rule.compiled->title, &context,
-                                   &missing_capture);
-      }
-      if (rule.has_content) {
-        new_content = ExpandTemplate(rule.compiled->content, &context,
-                                     &missing_capture);
-      }
-      if (rule.has_summary) {
-        new_summary = ExpandTemplate(rule.compiled->summary, &context,
-                                     &missing_capture);
-      }
-
-      if (missing_capture) {
-        WarnOnce(&runtime.warned_missing_capture, runtime_warnings,
-                 "规则 " + rule.id +
-                     " 的模板引用了未参与求值的字段捕获组，替换为空");
-      }
-
-      if (rule.has_title) {
-        if (new_title.empty()) {
-          WarnOnce(&runtime.warned_empty_rewrite, runtime_warnings,
-                   "规则 " + rule.id +
-                       " 把 title 重写为空，已保留原值");
-        } else {
-          fields->SetTitle(std::move(new_title));
-        }
-      }
-      if (rule.has_content) {
-        if (new_content.empty()) {
-          WarnOnce(&runtime.warned_empty_rewrite, runtime_warnings,
-                   "规则 " + rule.id +
-                       " 把 content 重写为空，已保留原值");
-        } else {
-          fields->SetContent(std::move(new_content));
-        }
-      }
-      if (rule.has_summary) {
-        fields->SetSummary(std::move(new_summary));
-      }
-      if (rule.has_level) fields->SetLevel(rule.level);
+      ApplyRewrite(rule, &context, fields,
+                   {&runtime.warned_missing_capture,
+                    &runtime.warned_empty_rewrite,
+                    &runtime.warned_invalid_time,
+                    &runtime.warned_empty_time},
+                   runtime_warnings);
     }
 
     AddSaveHit(rule, i, *fields, save_hits);
