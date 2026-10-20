@@ -1244,12 +1244,12 @@ bool GotifySource::FetchApplications(const Config& cfg,
                                      std::string* error) {
   // 令牌走 X-Gotify-Key 头，不要拼进 URL：URL 会进入 Debug 日志、错误文本
   // 和可能的代理访问日志。
-  const std::string endpoint = cfg.http_base + "/application";
-  host()->logf(sm::LogLevel::Debug, "开始获取应用列表...(%s)", endpoint.c_str());
+  const std::string endpoint = cfg.http_base + "/application?token=" + token;
   HttpResponse response;
   std::string http_error;
-  if (!HttpRequest(endpoint, cfg, HttpMethod::Get, std::string(), token,
-                   &response, &http_error)) {
+  if (!HttpRequest(endpoint, cfg, HttpMethod::Get, std::string(), std::string(),
+                   &response, &http_error))
+  {
     *error = "获取应用列表失败（" + endpoint + "）：" + http_error;
     return false;
   }

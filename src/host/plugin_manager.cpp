@@ -5,6 +5,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <deque>
 #include <set>
 #include <utility>
 
@@ -256,8 +257,23 @@ const char* PluginStateText(PluginState state) {
   return "未知状态";
 }
 
-// 一个插件 DLL。模块只加载/校验一次，被该类型的所有实例共享。
+// 一个插件 DLL。模块只在至少有一个活实例时保持加载；
+// 所有实例禁用/删除后模块会被卸载，重新启用时再加载并校验。
 struct PluginManager::PluginType {
+  // DLL 元信息在宿主内存里的深拷贝。meta.settings 里的指针全部指向 DLL，
+  // 模块卸载后立刻失效；界面展示设置项和读写设置文件都必须用这份副本。
+  struct SchemaStorage {
+    // deque：push_back 不会让已有字符串的地址失效，schema 里的 const char*
+    // 可以一直指向这里。
+    std::deque<std::string>         strings;
+    std::vector<sm::SettingDef>     settings;
+    std::vector<sm::SettingOption>  options;
+    std::vector<const char*>        subscriptions;
+
+    const char* Copy(const char* text);
+    bool        Equals(const SchemaStorage& other) const;
+  };
+
   std::string file_stem;  // DLL 文件名（不含扩展名），用于“文件名与 meta.id 一致”校验
   std::string id;         // 规范类型 id（meta.id）
   std::string path;
@@ -269,7 +285,11 @@ struct PluginManager::PluginType {
   const sm::PluginMeta*  meta = nullptr;
   CreatePluginFn         create_fn = nullptr;
   DestroyPluginFn        destroy_fn = nullptr;
-  std::vector<const char*> subscriptions;
+
+  // 每次校验成功都会尝试写入一份 schema 副本；内容没变就复用旧副本。
+  // 旧副本永不释放——ConfigStore 里的 PluginSettings 可能仍持有它的指针。
+  std::vector<std::unique_ptr<SchemaStorage>> schemas;
+  SchemaStorage*                              schema = nullptr;
 
   std::string    name;
   std::string    version;
@@ -278,7 +298,114 @@ struct PluginManager::PluginType {
   std::string    host_range;
   sm::PluginKind kind = sm::PluginKind::Source;
   std::size_t    setting_count = 0;
+
+  sm::Span<const sm::SettingDef> Settings() const {
+    if (schema == nullptr) return {};
+    return sm::Span<const sm::SettingDef>{schema->settings.data(), schema->settings.size()};
+  }
+
+  sm::Span<const char*> Subscriptions() const {
+    if (schema == nullptr) return {};
+    return sm::Span<const char*>{schema->subscriptions.data(),
+                                 schema->subscriptions.size()};
+  }
+
+  void AdoptSchema(const sm::PluginMeta& plugin_meta,
+                   const std::vector<const char*>& subscriptions);
 };
+
+const char* PluginManager::PluginType::SchemaStorage::Copy(const char* text) {
+  if (text == nullptr) return nullptr;
+  strings.emplace_back(text);
+  return strings.back().c_str();
+}
+
+bool PluginManager::PluginType::SchemaStorage::Equals(const SchemaStorage& other) const {
+  const auto same_cstr = [](const char* a, const char* b) {
+    if (a == nullptr || b == nullptr) return a == b;
+    return std::strcmp(a, b) == 0;
+  };
+
+  if (subscriptions.size() != other.subscriptions.size()) return false;
+  for (std::size_t i = 0; i < subscriptions.size(); ++i) {
+    if (!same_cstr(subscriptions[i], other.subscriptions[i])) return false;
+  }
+
+  if (settings.size() != other.settings.size()) return false;
+  for (std::size_t i = 0; i < settings.size(); ++i) {
+    const sm::SettingDef& a = settings[i];
+    const sm::SettingDef& b = other.settings[i];
+    if (!same_cstr(a.name, b.name) || !same_cstr(a.label, b.label) ||
+        !same_cstr(a.description, b.description) ||
+        !same_cstr(a.default_string, b.default_string)) {
+      return false;
+    }
+    if (a.type != b.type || a.requires_restart != b.requires_restart ||
+        a.default_bool != b.default_bool || a.default_int != b.default_int ||
+        a.default_double != b.default_double || a.min_int != b.min_int ||
+        a.max_int != b.max_int || a.min_double != b.min_double ||
+        a.max_double != b.max_double || a.max_string_bytes != b.max_string_bytes) {
+      return false;
+    }
+    if (a.options.size != b.options.size) return false;
+    for (std::size_t o = 0; o < a.options.size; ++o) {
+      if (!same_cstr(a.options.data[o].value, b.options.data[o].value) ||
+          !same_cstr(a.options.data[o].label, b.options.data[o].label)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+void PluginManager::PluginType::AdoptSchema(
+    const sm::PluginMeta& plugin_meta, const std::vector<const char*>& subscriptions) {
+  auto candidate = std::make_unique<SchemaStorage>();
+
+  candidate->subscriptions.reserve(subscriptions.size());
+  for (const char* pattern : subscriptions) {
+    candidate->subscriptions.push_back(candidate->Copy(pattern));
+  }
+
+  std::size_t option_count = 0;
+  for (std::size_t i = 0; i < plugin_meta.settings.size; ++i) {
+    const sm::SettingDef& def = plugin_meta.settings.data[i];
+    if (def.type == sm::SettingType::Enum) option_count += def.options.size;
+  }
+  // 预留精确容量：后面拿 options.data() 当稳定指针用，不能再扩容。
+  candidate->options.reserve(option_count);
+
+  candidate->settings.reserve(plugin_meta.settings.size);
+  for (std::size_t i = 0; i < plugin_meta.settings.size; ++i) {
+    const sm::SettingDef& src = plugin_meta.settings.data[i];
+    sm::SettingDef def = src;
+    def.name = candidate->Copy(src.name);
+    def.label = candidate->Copy(src.label);
+    def.description = candidate->Copy(src.description);
+    def.default_string = candidate->Copy(src.default_string);
+
+    if (src.type == sm::SettingType::Enum && src.options.data != nullptr) {
+      const std::size_t begin = candidate->options.size();
+      for (std::size_t o = 0; o < src.options.size; ++o) {
+        const sm::SettingOption& option = src.options.data[o];
+        candidate->options.push_back(
+            sm::SettingOption{candidate->Copy(option.value), candidate->Copy(option.label)});
+      }
+      def.options = sm::Span<const sm::SettingOption>{
+          candidate->options.data() + begin, candidate->options.size() - begin};
+    } else {
+      def.options = {};
+    }
+    candidate->settings.push_back(def);
+  }
+
+  // 同一个 DLL 反复禁用/启用很常见：内容没变就继续用旧副本，
+  // 既避免指针失效，也避免每切换一次就多留一份副本。
+  if (schema != nullptr && schema->Equals(*candidate)) return;
+
+  schemas.push_back(std::move(candidate));
+  schema = schemas.back().get();
+}
 
 // 一个运行实例。id 是实例 id；类型相关的信息全部通过 type 取。
 struct PluginManager::Record {
@@ -390,18 +517,26 @@ void PluginManager::UnloadTypeModule(PluginType& type) {
     type.module = nullptr;
   }
   // 这些指针都指向 DLL 内存，模块卸载后必须立刻清空。
+  // 名称/描述/schema/subscriptions 都另有宿主副本，不受影响。
   type.meta = nullptr;
   type.create_fn = nullptr;
   type.destroy_fn = nullptr;
-  type.subscriptions.clear();
+}
+
+bool PluginManager::TypeHasLiveInstance(const PluginType& type) const {
+  for (const auto& holder : records_) {
+    if (holder->type == &type && holder->instance != nullptr) return true;
+  }
+  return false;
 }
 
 void PluginManager::MaybeUnloadType(PluginType& type) {
-  // 只要还有实例记录就保留模块：禁用/初始化失败的实例仍要在界面上展示设置项，
-  // 重新启用时也不必重新加载 DLL。最后一条记录被删除后才会真正卸载。
-  for (const auto& holder : records_) {
-    if (holder->type == &type) return;
-  }
+  // 模块只在至少还有一个活实例时驻留。所有实例都被禁用、删除或收尾完成后
+  // 就卸载；重新启用时 EnsureTypeLoaded() 会重新加载并校验。
+  if (TypeHasLiveInstance(type)) return;
+  if (type.module == nullptr) return;
+  smlog::Writef(sm::LogLevel::Info, type.id.c_str(),
+                "没有启用的实例，插件模块已从内存卸载");
   UnloadTypeModule(type);
 }
 
@@ -416,7 +551,9 @@ void PluginManager::RejectType(PluginType& type, const std::string& reason) {
     type.module = nullptr;
   }
   type.meta = nullptr;
-  type.subscriptions.clear();
+  // 保留 schemas 里的副本（可能还有 PluginSettings 指向它们），但不再对外
+  // 暴露这份 schema：类型已经不可用。
+  type.schema = nullptr;
   type.valid = false;
   type.state = PluginState::Rejected;
   type.reason = reason;
@@ -485,7 +622,7 @@ void PluginManager::TryLoadAndValidateType(PluginType& type) {
   }
 
   type.meta = meta_call.value;
-  type.subscriptions = std::move(validation.subscriptions);
+  type.AdoptSchema(*meta_call.value, validation.subscriptions);
 
   const std::string canonical_id = type.meta->id;
   if (canonical_id != type.id) {
@@ -651,12 +788,14 @@ ReloadResult PluginManager::ReloadPlugins() {
     known[LowerAscii(holder->file_stem)] = holder.get();
   }
 
+  std::set<std::string> present;
   for (const util::DirEntry& entry : util::list_files(plugin_dir_, nullptr)) {
     if (!EndsWithNoCase(entry.name, ".dll")) continue;
     if (IsSharedDependency(entry.name)) continue;
     ++result.scanned;
 
     const std::string stem = entry.name.substr(0, entry.name.size() - 4);
+    present.insert(LowerAscii(stem));
     const auto known_it = known.find(LowerAscii(stem));
     if (known_it != known.end()) {
       PluginType& type = *known_it->second;
@@ -678,6 +817,57 @@ ReloadResult PluginManager::ReloadPlugins() {
     }
   }
 
+  // 目录里已经不存在的 DLL：把对应类型从内存里移除。否则禁用后卸载了模块、
+  // 用户删掉 DLL 再点“重新扫描”，列表里仍会留着已经删除的插件。
+  std::vector<PluginType*> vanished;
+  for (const auto& entry : known) {
+    if (present.find(entry.first) == present.end()) vanished.push_back(entry.second);
+  }
+
+  // 类型马上会被释放，先把它名下可能待写的插件设置落盘，再丢弃内存中的
+  // PluginSettings（它们持有指向类型 schema 的指针）。
+  if (!vanished.empty()) config_.FlushNow();
+
+  for (PluginType* const type : vanished) {
+    if (TypeHasLiveInstance(*type)) {
+      smlog::Writef(sm::LogLevel::Warn, type->id.c_str(),
+                    "插件文件已不存在，但仍有活动实例，暂时保留（请先禁用该实例）");
+      continue;
+    }
+
+    // 只摘掉运行记录；config.toml 里的 [[instances]] 保留，用户把 DLL 放回来后
+    // SynchronizeInstances() 会按原配置重新接上。
+    std::vector<Record*> doomed;
+    for (const auto& holder : records_) {
+      if (holder->type == type) doomed.push_back(holder.get());
+    }
+    for (Record* const record : doomed) {
+      if (record->pending_removal) {
+        TryFinishRemoval(*record);
+        continue;
+      }
+      config_.ForgetPluginSettings(record->id);
+      SetState(*record, PluginState::Unloaded, nullptr);
+      EraseRecord(*record);
+    }
+
+    UnloadTypeModule(*type);
+    const std::string type_id = type->id;
+    const std::string file_stem = type->file_stem;
+    {
+      std::lock_guard<std::mutex> lock(index_mutex_);
+      type_index_.erase(type_id);
+      if (file_stem != type_id) type_index_.erase(file_stem);
+    }
+    for (auto it = types_.begin(); it != types_.end(); ++it) {
+      if (it->get() != type) continue;
+      types_.erase(it);
+      break;
+    }
+    ++result.removed;
+    smlog::Writef(sm::LogLevel::Info, type_id.c_str(), "插件文件已删除，类型已从列表移除");
+  }
+
   // 新类型可能对上配置里原本"未安装"的实例；SynchronizeInstances 是幂等的。
   const Stats before = SnapshotStats();
   SynchronizeInstances();
@@ -688,9 +878,9 @@ ReloadResult PluginManager::ReloadPlugins() {
 
   smlog::Writef(sm::LogLevel::Info, "plugin",
                 "插件目录重新扫描：%d 个 DLL，新增 %d 个（通过 %d、拒绝 %d），"
-                "恢复 %d 个，新加载实例 %d 个",
+                "恢复 %d 个，移除 %d 个，新加载实例 %d 个",
                 result.scanned, result.added, result.accepted, result.rejected,
-                result.recovered, result.instances_loaded);
+                result.recovered, result.removed, result.instances_loaded);
   return result;
 }
 
@@ -867,13 +1057,14 @@ void PluginManager::LoadEnabled() {
 }
 
 void PluginManager::CreateAndInitialize(Record& record) {
-  if (record.type == nullptr || record.type->meta == nullptr) {
+  if (record.type == nullptr || record.type->schema == nullptr) {
     SetState(record, PluginState::InitializeFailed, "插件类型未加载");
     return;
   }
 
   config::Diagnostics diagnostics;
-  record.settings = &config_.EnsurePluginSettings(record.id, record.type->meta->settings,
+  // 用宿主副本而不是 DLL 里的 schema：模块禁用后会被卸载。
+  record.settings = &config_.EnsurePluginSettings(record.id, record.type->Settings(),
                                                   &diagnostics);
   LogConfigDiagnostics(record.id, diagnostics);
 
@@ -977,6 +1168,8 @@ bool PluginManager::Enable(const std::string& id) {
 bool PluginManager::Disable(const std::string& id) {
   Record* const record = FindRecord(id);
   if (record == nullptr || record->pending_removal) return false;
+  // 已经有一次 teardown 在收尾（例如自动禁用后等调度线程返回）时不要重入。
+  if (record->pending_teardown) return false;
 
   switch (record->state) {
     case PluginState::Discovered:
@@ -995,17 +1188,16 @@ bool PluginManager::Disable(const std::string& id) {
   record->auto_disabled = false;
   record->skip_stop = false;
 
-  if (record->instance != nullptr &&
-      !(scheduler_ != nullptr && scheduler_->IsExecuting(record->id))) {
-    CallScope scope(&main_arena_);
-    CallStop(*record);
-  } else if (record->instance != nullptr) {
-    // start() 正在调度线程上执行：不能在这里并发调用 stop()。标记 teardown，
-    // 由主线程 PumpMainThread 在 start 返回后收尾。
-    record->pending_teardown = true;
-  }
   if (scheduler_ != nullptr) scheduler_->Remove(record->id);
   SetState(*record, PluginState::Stopped, nullptr);
+
+  // 禁用不只是“停止调度”：实例必须销毁，这样最后一个启用的实例被禁用后，
+  // MaybeUnloadType() 才能把 DLL 从进程里卸载。若 start() 正在调度线程上
+  // 执行，FinishTeardown() 会留下 pending_teardown，由 PumpMainThread 收尾。
+  if (record->instance != nullptr) {
+    record->pending_teardown = true;
+    FinishTeardown(*record);
+  }
   return true;
 }
 
@@ -1569,9 +1761,9 @@ std::vector<PluginInfo> PluginManager::Snapshot() const {
     info->author = type.author;
     info->description = type.description;
     info->setting_count = type.setting_count;
-    if (type.meta != nullptr) info->settings = type.meta->settings;
-    info->subscriptions =
-        sm::Span<const char*>{type.subscriptions.data(), type.subscriptions.size()};
+    // schema 用宿主副本：插件被禁用后 DLL 可能已经卸载。
+    info->settings = type.Settings();
+    info->subscriptions = type.Subscriptions();
     info->can_add_instance = type.valid && type.kind == sm::PluginKind::Source &&
                              instance_count < kMaxInstancesPerType;
   };
@@ -1696,8 +1888,7 @@ std::vector<NotifierSubscriptions> PluginManager::ActiveNotifierSubscriptions() 
     }
     NotifierSubscriptions decl;
     decl.id = record.id;
-    decl.declared = sm::Span<const char*>{record.type->subscriptions.data(),
-                                          record.type->subscriptions.size()};
+    decl.declared = record.type->Subscriptions();
     result.push_back(std::move(decl));
   }
   return result;

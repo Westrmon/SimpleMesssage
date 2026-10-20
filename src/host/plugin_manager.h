@@ -104,6 +104,7 @@ struct ReloadResult {
   int         accepted = 0;     // 新 DLL 中通过校验并登记的数
   int         rejected = 0;     // 新 DLL 中未通过校验、被跳过的数
   int         recovered = 0;    // 之前被拒绝、这次通过校验的类型数
+  int         removed = 0;      // 文件已从目录消失、本次从内存移除的类型数
   int         instances_loaded = 0;  // 本次新创建并初始化的实例数
 };
 
@@ -214,6 +215,7 @@ class PluginManager : public IPluginRunner,
   void RejectType(PluginType& type, const std::string& reason);
   bool EnsureTypeLoaded(PluginType& type);
   void UnloadTypeModule(PluginType& type);
+  bool TypeHasLiveInstance(const PluginType& type) const;
   void MaybeUnloadType(PluginType& type);
 
   void SynchronizeInstances();

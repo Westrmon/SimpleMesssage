@@ -157,7 +157,7 @@ inline constexpr const char* kReloadPluginsHint =
     "列表里标出原因。已经在运行的插件不受影响。";
 inline constexpr const char* kReloadPluginsOkFormat =
     "重新扫描完成：%d 个 DLL，新增 %d 个（通过 %d、拒绝 %d），恢复 %d 个，"
-    "新加载 %d 个实例。";
+    "移除 %d 个，新加载 %d 个实例。";
 inline constexpr const char* kReloadPluginsNoChange = "重新扫描完成：没有发现新插件。";
 inline constexpr const char* kReloadPluginsFailedFormat = "重新扫描失败：%s";
 

@@ -377,12 +377,12 @@ void UiPanel::DrawPluginsPage() {
     const ReloadResult result = setup_.plugins->ReloadPlugins();
     if (!result.ok) {
       status_message_ = Fmt(strings::kReloadPluginsFailedFormat, result.error.c_str());
-    } else if (result.added == 0 && result.recovered == 0) {
+    } else if (result.added == 0 && result.recovered == 0 && result.removed == 0) {
       status_message_ = strings::kReloadPluginsNoChange;
     } else {
       status_message_ = Fmt(strings::kReloadPluginsOkFormat, result.scanned, result.added,
                             result.accepted, result.rejected, result.recovered,
-                            result.instances_loaded);
+                            result.removed, result.instances_loaded);
     }
   }
 
