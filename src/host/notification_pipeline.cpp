@@ -10,28 +10,17 @@
 #include "host/log.h"
 #include "host/notify_scope.h"
 #include "host/rule_save.h"
+#include "host/util.h"
 
 namespace sm {
 namespace host {
 namespace {
 
-bool IsContinuationByte(char c) {
-  return (static_cast<unsigned char>(c) & 0xC0u) == 0x80u;
-}
-
-bool TruncateUtf8(std::string* text, std::size_t max_bytes) {
-  if (text == nullptr || text->size() <= max_bytes) return false;
-  std::size_t cut = max_bytes;
-  while (cut > 0 && IsContinuationByte((*text)[cut])) --cut;
-  text->resize(cut);
-  return true;
-}
-
 std::string CopyField(const char* text, std::size_t max_bytes, const char* field,
                       const std::string& source) {
   if (text == nullptr) return {};
   std::string out(text);
-  if (TruncateUtf8(&out, max_bytes)) {
+  if (util::TruncateUtf8(&out, max_bytes)) {
     log::Writef(sm::LogLevel::Warn, source.c_str(),
                 "通知字段 %s 超过 %zu 字节，已截断", field, max_bytes);
   }
@@ -211,7 +200,7 @@ bool NotificationPipeline::Admit(const std::string& source_plugin,
 
     if (fields.has_title()) {
       owned.title.assign(fields.title_buffer());
-      if (TruncateUtf8(&owned.title, sm::limits::kMaxTitleBytes)) {
+      if (util::TruncateUtf8(&owned.title, sm::limits::kMaxTitleBytes)) {
         log::Writef(sm::LogLevel::Warn, source_plugin.c_str(),
                     "规则改写后的 title 超过 %zu 字节，已截断",
                     sm::limits::kMaxTitleBytes);
@@ -219,7 +208,7 @@ bool NotificationPipeline::Admit(const std::string& source_plugin,
     }
     if (fields.has_content()) {
       owned.content.assign(fields.content_buffer());
-      if (TruncateUtf8(&owned.content, sm::limits::kMaxContentBytes)) {
+      if (util::TruncateUtf8(&owned.content, sm::limits::kMaxContentBytes)) {
         log::Writef(sm::LogLevel::Warn, source_plugin.c_str(),
                     "规则改写后的 content 超过 %zu 字节，已截断",
                     sm::limits::kMaxContentBytes);
@@ -227,7 +216,7 @@ bool NotificationPipeline::Admit(const std::string& source_plugin,
     }
     if (fields.has_summary()) {
       owned.summary.assign(fields.summary_buffer());
-      if (TruncateUtf8(&owned.summary, sm::limits::kMaxContentBytes)) {
+      if (util::TruncateUtf8(&owned.summary, sm::limits::kMaxContentBytes)) {
         log::Writef(sm::LogLevel::Warn, source_plugin.c_str(),
                     "规则改写后的 summary 超过 %zu 字节，已截断",
                     sm::limits::kMaxContentBytes);
@@ -425,6 +414,7 @@ void NotificationPipeline::SetHistoryCapacity(std::size_t capacity) {
 }
 
 void NotificationPipeline::ClearHistory() {
+  std::lock_guard<std::mutex> lock(mutex_);
   history_.clear();
 }
 

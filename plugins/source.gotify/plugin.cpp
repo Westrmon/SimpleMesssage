@@ -1077,11 +1077,21 @@ StartResult GotifySource::start(StartOutput* out) {
     return StartResult::Empty;
   }
 
+  // arena 不够时不要把已经出队的消息丢掉：按原顺序放回队首，下次再试。
+  const auto requeue_remaining = [this](std::deque<Pending>& items, std::size_t from) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (std::size_t i = items.size(); i > from; --i) {
+      queue_.push_front(std::move(items[i - 1]));
+    }
+  };
+
   sm::Notification* items = host()->allocate_array<sm::Notification>(taken.size());
   if (items == nullptr) {
-    host()->logf(LogLevel::Warn, "本次要投递 %llu 条消息，但 arena 分配失败，丢弃",
+    host()->logf(LogLevel::Warn,
+                 "本次要投递 %llu 条消息，但 arena 分配失败，留待下次重试",
                  static_cast<unsigned long long>(taken.size()));
-    return StartResult::Empty;
+    requeue_remaining(taken, 0);
+    return StartResult::Error;
   }
 
   std::size_t made = 0;
@@ -1117,11 +1127,14 @@ StartResult GotifySource::start(StartOutput* out) {
     ++made;
   }
 
-  if (made == 0) {
-    host()->logf(LogLevel::Warn, "有 %llu 条消息待投递，但 arena 全部分配失败，全部丢弃",
-                 static_cast<unsigned long long>(taken.size()));
-    return StartResult::Empty;
+  if (made < taken.size()) {
+    host()->logf(LogLevel::Warn,
+                 "有 %llu 条消息因 arena 不足未能投递，已放回队列等待下次",
+                 static_cast<unsigned long long>(taken.size() - made));
+    requeue_remaining(taken, made);
   }
+
+  if (made == 0) return StartResult::Error;
 
   out->items = sm::Span<const sm::Notification>(items, made);
   if (dropped != 0) {
@@ -1229,13 +1242,14 @@ GotifySource::ReadStatus GotifySource::ReadOnce(CURL* easy, const Config& cfg,
 bool GotifySource::FetchApplications(const Config& cfg,
                                      const std::string& token,
                                      std::string* error) {
-  const std::string endpoint = cfg.http_base + "/application?token=" + token;
+  // 令牌走 X-Gotify-Key 头，不要拼进 URL：URL 会进入 Debug 日志、错误文本
+  // 和可能的代理访问日志。
+  const std::string endpoint = cfg.http_base + "/application";
   host()->logf(sm::LogLevel::Debug, "开始获取应用列表...(%s)", endpoint.c_str());
   HttpResponse response;
   std::string http_error;
-  if (!HttpRequest(endpoint, cfg, HttpMethod::Get, std::string(), std::string(),
-                   &response, &http_error))
-  {
+  if (!HttpRequest(endpoint, cfg, HttpMethod::Get, std::string(), token,
+                   &response, &http_error)) {
     *error = "获取应用列表失败（" + endpoint + "）：" + http_error;
     return false;
   }

@@ -28,6 +28,9 @@ bool read_text_file(const std::string& utf8_path, std::string* out_text,
 bool write_text_file_atomically(const std::string& utf8_path, const std::string& text,
                                 std::string* out_error = nullptr);
 
+// 截断到 max_bytes，且不切断 UTF-8 多字节序列。返回是否真的截断了。
+bool TruncateUtf8(std::string* text, std::size_t max_bytes);
+
 using DirEntry = platform::fs::DirEntry;
 
 std::vector<DirEntry> list_files(const std::string& utf8_dir, const char* name_suffix);

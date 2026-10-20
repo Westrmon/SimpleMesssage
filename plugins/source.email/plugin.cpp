@@ -773,6 +773,21 @@ StartResult EmailSource::start(StartOutput* out) {
     return StartResult::Error;
   }
 
+  // 已读/删除的 UID 不会再出现在 UNSEEN 里；不裁剪的话 reported_ 会随
+  // 邮箱使用无限增长。搜索成功才裁剪，避免一次失败的 SEARCH 清空记录后
+  // 把所有旧邮件重新报一遍。
+  const std::set<long> unseen(uids.begin(), uids.end());
+  for (auto it = reported_.begin(); it != reported_.end();) {
+    if (unseen.find(*it) == unseen.end()) {
+      it = reported_.erase(it);
+    } else {
+      ++it;
+    }
+  }
+
+  // 搜索成功说明连接与认证正常，清掉上一轮的错误提示。
+  host()->set_error(nullptr);
+
   std::vector<long> fresh;
   for (long uid : uids) {
     if (reported_.find(uid) == reported_.end()) fresh.push_back(uid);

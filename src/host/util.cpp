@@ -135,10 +135,27 @@ bool write_text_file_atomically(const std::string& utf8_path, const std::string&
     return false;
   }
   if (!rename_file(tmp, utf8_path)) {
-    if (out_error != nullptr) *out_error = "无法替换 " + utf8_path;
+    // 原文件已经改名成 .bak；替换失败时必须把它换回去，否则目标文件
+    // 会从磁盘上“消失”，用户下次启动只会看到默认配置。
+    const bool restored = !file_exists(bak) || rename_file(bak, utf8_path);
+    if (out_error != nullptr) {
+      *out_error = restored ? ("无法替换 " + utf8_path)
+                            : ("无法替换 " + utf8_path + "，且无法从 " + bak + " 回滚");
+    }
     remove_file(tmp);
     return false;
   }
+  return true;
+}
+
+bool TruncateUtf8(std::string* text, std::size_t max_bytes) {
+  if (text == nullptr || text->size() <= max_bytes) return false;
+  std::size_t cut = max_bytes;
+  while (cut > 0 &&
+         (static_cast<unsigned char>((*text)[cut]) & 0xC0u) == 0x80u) {
+    --cut;
+  }
+  text->resize(cut);
   return true;
 }
 

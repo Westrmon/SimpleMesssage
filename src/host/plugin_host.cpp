@@ -192,11 +192,19 @@ double PluginHost::setting_double(const char* name, double fallback) const {
 }
 
 const char* PluginHost::setting_string(const char* name, const char* fallback) const {
-  return settings_ != nullptr ? settings_->GetString(name, fallback) : fallback;
+  // 插件在调度线程读设置，UI 线程可能同时改写同一个值；返回线程私有副本，
+  // 避免把 PluginSettings 内部 string 的地址交出去。
+  thread_local std::string copy;
+  copy = settings_ != nullptr ? settings_->GetStringCopy(name, fallback)
+                              : (fallback != nullptr ? fallback : "");
+  return copy.c_str();
 }
 
 const char* PluginHost::setting_enum(const char* name, const char* fallback) const {
-  return settings_ != nullptr ? settings_->GetString(name, fallback) : fallback;
+  thread_local std::string copy;
+  copy = settings_ != nullptr ? settings_->GetStringCopy(name, fallback)
+                              : (fallback != nullptr ? fallback : "");
+  return copy.c_str();
 }
 
 void PluginHost::log(sm::LogLevel level, const char* message) {

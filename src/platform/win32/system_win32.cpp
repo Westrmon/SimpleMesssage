@@ -102,13 +102,16 @@ const char* architecture_name() {
 char path_separator() { return '\\'; }
 
 std::string user_config_root() {
-  char* base = nullptr;
-  std::size_t length = 0;
-  if (::_dupenv_s(&base, &length, "APPDATA") != 0 || base == nullptr) {
+  // 不要读 ANSI 的 %APPDATA%：用户名含非 ASCII 字符时，拿到的字节流不是
+  // UTF-8，后续按 UTF-8 转宽字符会得到乱码路径。
+  PWSTR wide = nullptr;
+  if (::SHGetKnownFolderPath(FOLDERID_RoamingAppData, KF_FLAG_DEFAULT, nullptr,
+                             &wide) != S_OK ||
+      wide == nullptr) {
     return {};
   }
-  const std::string root = path_join(base, "SimpleMessage");
-  std::free(base);
+  const std::string root = path_join(utf8::narrow(wide).c_str(), "SimpleMessage");
+  ::CoTaskMemFree(wide);
   return root;
 }
 

@@ -120,7 +120,7 @@ bool DrawStringControl(const sm::SettingDef& def, config::PluginSettings& settin
                        TextInputState* state, float control_width) {
   const std::size_t capacity = (def.max_string_bytes != 0) ? def.max_string_bytes
                                                            : sm::limits::kMaxStringSettingBytes;
-  std::string value = settings.GetString(def.name, FallbackString(def));
+  std::string value = settings.GetStringCopy(def.name, FallbackString(def));
 
   ImGui::SetNextItemWidth(control_width);
   const bool changed = InputTextStdString("##v", def.name, &value, capacity, state);
@@ -148,7 +148,7 @@ bool DrawSoundControl(const sm::SettingDef& def, config::PluginSettings& setting
   const std::size_t capacity = (def.max_string_bytes != 0)
                                    ? def.max_string_bytes
                                    : sm::limits::kMaxStringSettingBytes;
-  std::string value = settings.GetString(def.name, FallbackString(def));
+  std::string value = settings.GetStringCopy(def.name, FallbackString(def));
 
   const ImGuiStyle& style = ImGui::GetStyle();
   const float browse_width =
@@ -192,11 +192,12 @@ bool DrawSoundControl(const sm::SettingDef& def, config::PluginSettings& setting
 
 bool DrawEnumControl(const sm::SettingDef& def, config::PluginSettings& settings,
                      float control_width) {
-  const char* const current = settings.GetString(def.name, FallbackString(def));
+  // 必须拷贝：下面的 SetString() 会改写设置值，指向内部的指针会失效。
+  const std::string current = settings.GetStringCopy(def.name, FallbackString(def));
   std::string preview = current;
   for (std::size_t i = 0; i < def.options.size; ++i) {
     const sm::SettingOption& option = def.options.data[i];
-    if (option.value != nullptr && std::strcmp(option.value, current) == 0) {
+    if (option.value != nullptr && current == option.value) {
       preview = (option.label != nullptr && option.label[0] != '\0') ? option.label
                                                                     : option.value;
       break;
@@ -209,7 +210,7 @@ bool DrawEnumControl(const sm::SettingDef& def, config::PluginSettings& settings
     for (std::size_t i = 0; i < def.options.size; ++i) {
       const sm::SettingOption& option = def.options.data[i];
       if (option.value == nullptr) continue;
-      const bool selected = std::strcmp(option.value, current) == 0;
+      const bool selected = current == option.value;
       const char* const text =
           (option.label != nullptr && option.label[0] != '\0') ? option.label : option.value;
       if (ImGui::Selectable(text, selected)) {

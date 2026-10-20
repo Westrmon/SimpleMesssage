@@ -7,6 +7,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <cstring>
+#include <exception>
 #include <filesystem>
 #include <mutex>
 #include <string>
@@ -301,7 +302,14 @@ class SoundNotifier final : public PluginBase {
         seq = pending_seq_;
         handled_seq_ = seq;
       }
-      PlayBlocking(spec, seq);
+      // 后台线程不能让异常穿出去：std::terminate 会带走整个宿主进程。
+      try {
+        PlayBlocking(spec, seq);
+      } catch (const std::exception& e) {
+        host()->logf(LogLevel::Error, "声音插件后台线程异常：%s", e.what());
+      } catch (...) {
+        host()->logf(LogLevel::Error, "声音插件后台线程发生未知异常");
+      }
     }
 
     if (engine_ready_) {

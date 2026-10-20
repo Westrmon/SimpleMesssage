@@ -1,8 +1,10 @@
 // SimpleMessage — 规则保存写入器的实现
 #include "host/rule_save.h"
 
+#include <array>
 #include <cstdio>
 #include <ctime>
+#include <string_view>
 #include <utility>
 
 #include "platform/fs.h"
@@ -194,60 +196,34 @@ void RuleSaveSink::Save(const Rule& rule, const sm::Notification& view,
       view.seq > 0 ? std::to_string(view.seq) : std::string();
   const std::string phase = delivery_phase ? "delivery" : "source";
 
+  const auto text = [](const char* value) {
+    return value != nullptr ? std::string_view(value) : std::string_view();
+  };
+
+  // 值的顺序必须与 kNotificationPlaceholders 完全一致（大小有 static_assert
+  // 兜底）；把名字都集中在 placeholders.h 里，避免白名单与解析器各写一份。
+  const std::array<std::string_view, 24> values = {
+      date,      year,   month,    day,     hour,      minute,
+      second,    time,   datetime, timestamp, text(view.title),
+      text(view.content), text(view.summary), text(view.topic),
+      LevelToken(view.level), text(view.id), text(view.url), text(view.icon),
+      text(view.source_plugin), seq, rule.id, rule.name, phase, notifier_id};
+  static_assert(24 == kNotificationPlaceholders.size(),
+                "占位符值表与名字表长度不一致");
+
   const PlaceholderResolver resolver = [&](std::string_view key,
                                            std::string* out) {
-    if (key == "date") {
-      *out = date;
-    } else if (key == "year") {
-      *out = year;
-    } else if (key == "month") {
-      *out = month;
-    } else if (key == "day") {
-      *out = day;
-    } else if (key == "hour") {
-      *out = hour;
-    } else if (key == "minute") {
-      *out = minute;
-    } else if (key == "second") {
-      *out = second;
-    } else if (key == "time") {
-      *out = time;
-    } else if (key == "datetime") {
-      *out = datetime;
-    } else if (key == "timestamp") {
-      *out = timestamp;
-    } else if (key == "title") {
-      *out = TextOrEmpty(view.title);
-    } else if (key == "content") {
-      *out = TextOrEmpty(view.content);
-    } else if (key == "summary") {
-      *out = TextOrEmpty(view.summary);
-    } else if (key == "topic") {
-      *out = TextOrEmpty(view.topic);
-    } else if (key == "level") {
-      *out = LevelToken(view.level);
-    } else if (key == "id") {
-      *out = TextOrEmpty(view.id);
-    } else if (key == "url") {
-      *out = TextOrEmpty(view.url);
-    } else if (key == "icon") {
-      *out = TextOrEmpty(view.icon);
-    } else if (key == "source") {
-      *out = TextOrEmpty(view.source_plugin);
-    } else if (key == "seq") {
-      *out = seq;
-    } else if (key == "ruleid") {
-      *out = rule.id;
-    } else if (key == "rulename") {
-      *out = rule.name;
-    } else if (key == "phase") {
-      *out = phase;
-    } else if (key == "notifier") {
-      *out = notifier_id;
-    } else {
-      return false;
+    for (std::size_t i = 0; i < values.size(); ++i) {
+      if (key == kNotificationPlaceholders[i]) {
+        if (values[i].empty()) {
+          out->clear();
+        } else {
+          out->assign(values[i].data(), values[i].size());
+        }
+        return true;
+      }
     }
-    return true;
+    return false;
   };
 
   std::string warn_path;
@@ -272,6 +248,9 @@ void RuleSaveSink::Save(const Rule& rule, const sm::Notification& view,
                  !util::path_filename(path).empty() && !HasDotSegment(path);
 
     if (valid) {
+      // 先构造内容再打开文件：BuildBlock 里的 string 分配失败不会泄漏 FILE*。
+      const std::string block =
+          BuildBlock(rule, view, delivery_phase, notifier_id, time_ms);
       std::FILE* file = platform::fs::open_file(path.c_str(), "ab");
       if (file == nullptr) {
         const std::string dir = util::path_dir(path);
@@ -282,13 +261,11 @@ void RuleSaveSink::Save(const Rule& rule, const sm::Notification& view,
       if (file == nullptr) {
         valid = false;
       } else {
-        const std::string block =
-            BuildBlock(rule, view, delivery_phase, notifier_id, time_ms);
         const bool written =
             std::fwrite(block.data(), 1, block.size(), file) == block.size();
-        std::fflush(file);
-        std::fclose(file);
-        valid = written;
+        const bool flushed = std::fflush(file) == 0;
+        const bool closed = std::fclose(file) == 0;
+        valid = written && flushed && closed;
       }
     }
 

@@ -70,7 +70,7 @@ ObserverFn g_observer = nullptr;
 void*      g_observer_user = nullptr;
 
 std::thread g_writer;
-bool        g_initialized = false;
+std::atomic<bool> g_initialized{false};
 
 void copy_sanitized(char* dst, std::size_t cap, const char* src, bool mark_truncated) {
   if (cap == 0) return;
@@ -206,10 +206,10 @@ bool append_locked(const char* data, std::size_t len) {
     if (file == nullptr) return false;
   }
 
-  std::fwrite(data, 1, len, file);
-  std::fflush(file);
-  std::fclose(file);
-  return true;
+  const std::size_t written = std::fwrite(data, 1, len, file);
+  const bool flushed = std::fflush(file) == 0;
+  const bool closed = std::fclose(file) == 0;
+  return written == len && flushed && closed;
 }
 
 bool write_batch(const std::vector<Record>& batch) {

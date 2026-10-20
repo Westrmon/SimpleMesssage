@@ -236,6 +236,80 @@ std::string ToLower(std::string s) {
   return s;
 }
 
+// webhook 的 icon 由宿主下载并显示；不校验的话，任何能 POST 的进程都能让
+// 宿主访问内网地址（SSRF）。这里拒绝明显的环回/私网字面量。注意它挡不住
+// DNS 解析到私网地址或重绑定，只能消除最直接的攻击面。
+bool LooksLikePublicHttpUrl(const std::string& url) {
+  const std::string lower = ToLower(url);
+  std::size_t pos = 0;
+  if (lower.compare(0, 7, "http://") == 0) {
+    pos = 7;
+  } else if (lower.compare(0, 8, "https://") == 0) {
+    pos = 8;
+  } else {
+    return false;
+  }
+
+  const std::size_t end = lower.find_first_of("/?#", pos);
+  std::string authority = lower.substr(pos, end == std::string::npos ? end : end - pos);
+  const std::size_t at = authority.rfind('@');
+  if (at != std::string::npos) authority.erase(0, at + 1);
+
+  if (authority.empty() || authority[0] == '[') return false;  // 拒绝 IPv6 字面量
+  std::string host = authority;
+  const std::size_t colon = host.find(':');
+  if (colon != std::string::npos) host.resize(colon);
+  if (host.empty() || host == "localhost" || host == "0.0.0.0") return false;
+  if (host.size() > 10 &&
+      host.compare(host.size() - 10, 10, ".localhost") == 0) {
+    return false;
+  }
+
+  // 手动解析 IPv4 字面量（避免 sscanf 的宽松语法与 CRT 警告）。
+  unsigned parts[4] = {0, 0, 0, 0};
+  bool ipv4 = true;
+  std::size_t start = 0;
+  for (int i = 0; i < 4; ++i) {
+    const std::size_t dot = host.find('.', start);
+    if ((i < 3) != (dot != std::string::npos)) {
+      ipv4 = false;
+      break;
+    }
+    const std::size_t segment_end =
+        (dot == std::string::npos) ? host.size() : dot;
+    if (segment_end == start || segment_end - start > 3) {
+      ipv4 = false;
+      break;
+    }
+    unsigned value = 0;
+    for (std::size_t k = start; k < segment_end; ++k) {
+      const char ch = host[k];
+      if (ch < '0' || ch > '9') {
+        ipv4 = false;
+        break;
+      }
+      value = value * 10 + static_cast<unsigned>(ch - '0');
+    }
+    if (!ipv4 || value > 255) {
+      ipv4 = false;
+      break;
+    }
+    parts[i] = value;
+    start = segment_end + 1;
+  }
+
+  if (ipv4) {
+    const unsigned a = parts[0];
+    const unsigned b = parts[1];
+    if (a == 0 || a == 10 || a == 127) return false;
+    if (a == 169 && b == 254) return false;              // link-local
+    if (a == 172 && b >= 16 && b <= 31) return false;    // private
+    if (a == 192 && b == 168) return false;              // private
+    if (a == 100 && b >= 64 && b <= 127) return false;   // CGNAT
+  }
+  return true;
+}
+
 std::string SanitizeTopic(const std::string& raw, bool* changed) {
   std::string out = ToLower(raw);
   *changed = false;
@@ -668,8 +742,13 @@ void WebhookSource::HandleRequest(const httplib::Request& req, httplib::Response
 
   std::string body_icon;
   if (JsonTopLevelString(req.body, "icon", &body_icon)) {
-    item.icon = body_icon;
-    ClampUtf8(&item.icon, sm::limits::kMaxIconBytes);
+    const std::string lower_icon = ToLower(body_icon);
+    const bool remote = lower_icon.compare(0, 7, "http://") == 0 ||
+                        lower_icon.compare(0, 8, "https://") == 0;
+    if (!remote || LooksLikePublicHttpUrl(body_icon)) {
+      item.icon = body_icon;
+      ClampUtf8(&item.icon, sm::limits::kMaxIconBytes);
+    }
   }
 
   if (cfg.include_headers) {

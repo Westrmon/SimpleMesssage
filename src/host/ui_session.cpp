@@ -35,7 +35,10 @@ class ImGuiRuntime final : public IUiRuntime, public IUiFrameRenderer {
       : window_(window), renderer_(renderer), sizing_(sizing) {}
 
   bool Create(void** out_context, int font_size_px) override {
-    if (context_ != nullptr) return true;
+    if (context_ != nullptr && backend_ != nullptr) {
+      if (out_context != nullptr) *out_context = context_;
+      return true;
+    }
     if (window_ == nullptr || !window_->alive()) {
       sm::log::Write(sm::LogLevel::Error, "ui", "没有窗口，无法建立 UI 会话");
       return false;
@@ -59,7 +62,8 @@ class ImGuiRuntime final : public IUiRuntime, public IUiFrameRenderer {
     if (!ImGui_ImplGlfw_InitForOther(static_cast<GLFWwindow*>(window_->native_handle()),
                                      true)) {
       sm::log::Write(sm::LogLevel::Error, "ui", "imgui 的 GLFW 后端初始化失败");
-      ImGui::DestroyContext();
+      ImGui::DestroyContext(context_);
+      context_ = nullptr;
       return false;
     }
     window_backend_ready_ = true;
@@ -70,7 +74,8 @@ class ImGuiRuntime final : public IUiRuntime, public IUiFrameRenderer {
       ImGui_ImplGlfw_Shutdown();
       window_backend_ready_ = false;
       backend_.reset();
-      ImGui::DestroyContext();
+      ImGui::DestroyContext(context_);
+      context_ = nullptr;
       return false;
     }
 
@@ -375,6 +380,10 @@ void UiSession::SetContentScale(Surface surface, float scale) {
 
 UiSession::Changes UiSession::Tick(std::int64_t now_ms) {
   ExpireSurfaces(now_ms);
+
+  // 没有通知表面时允许下次重新尝试创建；这样一次失败（例如当时的窗口
+  // 还没有可用的 GL 上下文）不会让通知窗口永久消失。
+  if (surfaces_.empty()) notify_factory_attempted_ = false;
 
   if (notify_.runtime == nullptr && notify_factory_ != nullptr &&
       notify_factory_attempted_ == false && !surfaces_.empty()) {

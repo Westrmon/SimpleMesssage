@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -118,7 +119,8 @@ class PluginSettings {
   bool         GetBool(const char* name, bool fallback) const;
   std::int64_t GetInt(const char* name, std::int64_t fallback) const;
   double       GetDouble(const char* name, double fallback) const;
-  const char*  GetString(const char* name, const char* fallback) const;
+  // 返回副本：设置值可能被 UI 线程随时改写，返回内部 c_str() 会悬垂。
+  std::string  GetStringCopy(const char* name, const char* fallback) const;
 
   bool SetBool(const char* name, bool value);
   bool SetInt(const char* name, std::int64_t value);
@@ -149,6 +151,10 @@ class PluginSettings {
   void FillDefaults();
 
   ConfigStore* owner_ = nullptr;
+
+  // 插件在调度线程 start() 里读设置，UI 线程同时可能写设置。
+  // 递归锁：Load()/ResetToDefaults() 会调用 FillDefaults()。
+  mutable std::recursive_mutex mutex_;
 
   const sm::SettingDef*  schema_ = nullptr;
   std::size_t            schema_size_ = 0;

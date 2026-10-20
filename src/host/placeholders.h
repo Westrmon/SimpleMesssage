@@ -4,6 +4,7 @@
 // 具体占位符取什么值由调用方通过 resolver 提供，方便以后复用到通知以外的场景。
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -12,6 +13,14 @@
 
 namespace sm {
 namespace host {
+
+// 规则保存支持的通知占位符。规则校验与保存写入器共用这一份清单，
+// 避免新增占位符时只改一处导致“加载期通过、运行期不展开”。
+inline constexpr std::array<std::string_view, 24> kNotificationPlaceholders = {
+    "date",     "year",     "month",    "day",      "hour",     "minute",
+    "second",   "time",     "datetime", "timestamp", "title",   "content",
+    "summary",  "topic",    "level",    "id",       "url",     "icon",
+    "source",   "seq",      "ruleid",   "rulename", "phase",   "notifier"};
 
 enum class PlaceholderMode : std::int32_t {
   Text = 0,  // 替换值原样写入

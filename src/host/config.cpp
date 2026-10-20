@@ -307,8 +307,39 @@ ConfigStore::~ConfigStore() = default;
 
 PluginSettings::PluginSettings() = default;
 PluginSettings::~PluginSettings() = default;
-PluginSettings::PluginSettings(PluginSettings&&) noexcept = default;
-PluginSettings& PluginSettings::operator=(PluginSettings&&) noexcept = default;
+
+// mutex 不可移动，手写移动语义：移动期间锁住源对象，避免和插件线程的
+// 设置读取同时发生。
+PluginSettings::PluginSettings(PluginSettings&& other) noexcept {
+  std::lock_guard<std::recursive_mutex> lock(other.mutex_);
+  owner_ = other.owner_;
+  schema_ = other.schema_;
+  schema_size_ = other.schema_size_;
+  values_ = std::move(other.values_);
+  index_ = std::move(other.index_);
+  file_path_ = std::move(other.file_path_);
+  extra_ = std::move(other.extra_);
+  loaded_ = other.loaded_;
+  dirty_ = other.dirty_;
+  schema_too_new_ = other.schema_too_new_;
+}
+
+PluginSettings& PluginSettings::operator=(PluginSettings&& other) noexcept {
+  if (this == &other) return *this;
+  std::scoped_lock<std::recursive_mutex, std::recursive_mutex> lock(mutex_,
+                                                                   other.mutex_);
+  owner_ = other.owner_;
+  schema_ = other.schema_;
+  schema_size_ = other.schema_size_;
+  values_ = std::move(other.values_);
+  index_ = std::move(other.index_);
+  file_path_ = std::move(other.file_path_);
+  extra_ = std::move(other.extra_);
+  loaded_ = other.loaded_;
+  dirty_ = other.dirty_;
+  schema_too_new_ = other.schema_too_new_;
+  return *this;
+}
 
 void AddInfo(Diagnostics* out, std::string message) {
   if (out == nullptr) return;
@@ -393,6 +424,7 @@ void PluginSettings::FillDefaults() {
 
 void PluginSettings::Load(const std::string& plugin_id, const std::string& file_path,
                           sm::Span<const sm::SettingDef> schema, Diagnostics* out) {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
   schema_ = schema.data;
   schema_size_ = schema.size;
   file_path_ = file_path;
@@ -517,6 +549,7 @@ void PluginSettings::Load(const std::string& plugin_id, const std::string& file_
 }
 
 bool PluginSettings::SetBool(const char* name, bool value) {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
   const auto it = index_.find(name != nullptr ? name : "");
   if (it == index_.end()) return false;
   Value& slot = values_[it->second];
@@ -528,6 +561,7 @@ bool PluginSettings::SetBool(const char* name, bool value) {
 }
 
 bool PluginSettings::SetInt(const char* name, std::int64_t value) {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
   const auto it = index_.find(name != nullptr ? name : "");
   if (it == index_.end()) return false;
   Value& slot = values_[it->second];
@@ -539,6 +573,7 @@ bool PluginSettings::SetInt(const char* name, std::int64_t value) {
 }
 
 bool PluginSettings::SetDouble(const char* name, double value) {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
   const auto it = index_.find(name != nullptr ? name : "");
   if (it == index_.end()) return false;
   Value& slot = values_[it->second];
@@ -550,6 +585,7 @@ bool PluginSettings::SetDouble(const char* name, double value) {
 }
 
 bool PluginSettings::SetString(const char* name, const std::string& value) {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
   const auto it = index_.find(name != nullptr ? name : "");
   if (it == index_.end()) return false;
   Value& slot = values_[it->second];
@@ -561,30 +597,35 @@ bool PluginSettings::SetString(const char* name, const std::string& value) {
 }
 
 bool PluginSettings::GetBool(const char* name, bool fallback) const {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
   const auto it = index_.find(name != nullptr ? name : "");
   if (it == index_.end()) return fallback;
   return values_[it->second].b;
 }
 
 std::int64_t PluginSettings::GetInt(const char* name, std::int64_t fallback) const {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
   const auto it = index_.find(name != nullptr ? name : "");
   if (it == index_.end()) return fallback;
   return values_[it->second].i;
 }
 
 double PluginSettings::GetDouble(const char* name, double fallback) const {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
   const auto it = index_.find(name != nullptr ? name : "");
   if (it == index_.end()) return fallback;
   return values_[it->second].d;
 }
 
-const char* PluginSettings::GetString(const char* name, const char* fallback) const {
+std::string PluginSettings::GetStringCopy(const char* name, const char* fallback) const {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
   const auto it = index_.find(name != nullptr ? name : "");
-  if (it == index_.end()) return fallback;
-  return values_[it->second].s.c_str();
+  if (it == index_.end()) return fallback != nullptr ? fallback : "";
+  return values_[it->second].s;
 }
 
 void PluginSettings::ResetToDefaults() {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
   extra_.reset();
   FillDefaults();
   dirty_ = true;
@@ -994,6 +1035,7 @@ bool ConfigStore::RemoveInstance(const std::string& instance_id, Diagnostics* ou
 }
 
 bool ConfigStore::SetInstanceEnabled(const std::string& instance_id, bool enabled) {
+  if (read_only_ || schema_too_new_) return false;
   for (InstanceConfig& instance : config_.instances) {
     if (instance.id != instance_id) continue;
     if (instance.enabled == enabled) return true;
@@ -1055,19 +1097,22 @@ bool ConfigStore::DeletePluginSettingsFiles(const std::string& instance_id,
   const std::string path =
       util::path_join(paths_.plugin_config_dir, instance_id + ".toml");
   bool removed = false;
+  bool all_removed = true;
   for (const std::string& target : {path, path + ".bak"}) {
     if (!util::file_exists(target)) continue;
     if (util::remove_file(target)) {
       removed = true;
     } else {
+      all_removed = false;
       AddWarn(out, "无法删除实例设置文件：" + target);
     }
   }
   if (removed) AddInfo(out, "已删除实例 " + instance_id + " 的设置文件");
-  return true;
+  return all_removed;
 }
 
 void ConfigStore::SetRuleEnabled(const std::string& rule_id, bool enabled) {
+  if (read_only_ || schema_too_new_) return;
   const auto it = config_.rules.find(rule_id);
   if (it != config_.rules.end() && it->second == enabled) return;
   config_.rules[rule_id] = enabled;

@@ -37,9 +37,14 @@ bool decode_rgba(const std::vector<unsigned char>& bytes, int max_dimension,
     return false;
   }
 
-  const auto finish = [uninit]() {
-    if (uninit) ::CoUninitialize();
-  };
+  // 必须在所有 ComPtr 之前声明：局部对象逆序析构，保证 Release() 都发生在
+  // CoUninitialize() 之前（在已反初始化的套间上 Release 是未定义行为）。
+  struct ComScope {
+    bool uninitialize = false;
+    ~ComScope() {
+      if (uninitialize) ::CoUninitialize();
+    }
+  } com_scope{uninit};
 
   ComPtr<IWICImagingFactory> factory;
   HRESULT hr = ::CoCreateInstance(
@@ -48,7 +53,6 @@ bool decode_rgba(const std::vector<unsigned char>& bytes, int max_dimension,
       reinterpret_cast<void**>(factory.GetAddressOf()));
   if (FAILED(hr) || factory == nullptr) {
     *error = "创建 WIC 工厂失败";
-    finish();
     return false;
   }
 
@@ -60,7 +64,6 @@ bool decode_rgba(const std::vector<unsigned char>& bytes, int max_dimension,
   }
   if (FAILED(hr)) {
     *error = "无法从内存建立图片流";
-    finish();
     return false;
   }
 
@@ -70,7 +73,6 @@ bool decode_rgba(const std::vector<unsigned char>& bytes, int max_dimension,
                                         decoder.GetAddressOf());
   if (FAILED(hr) || decoder == nullptr) {
     *error = "无法识别图片格式";
-    finish();
     return false;
   }
 
@@ -78,7 +80,6 @@ bool decode_rgba(const std::vector<unsigned char>& bytes, int max_dimension,
   hr = decoder->GetFrame(0, frame.GetAddressOf());
   if (FAILED(hr) || frame == nullptr) {
     *error = "图片没有可解码的帧";
-    finish();
     return false;
   }
 
@@ -87,12 +88,10 @@ bool decode_rgba(const std::vector<unsigned char>& bytes, int max_dimension,
   hr = frame->GetSize(&source_width, &source_height);
   if (FAILED(hr) || source_width == 0 || source_height == 0) {
     *error = "图片尺寸无效";
-    finish();
     return false;
   }
   if (static_cast<std::uint64_t>(source_width) * source_height > max_source_pixels) {
     *error = "图片尺寸过大";
-    finish();
     return false;
   }
 
@@ -105,7 +104,6 @@ bool decode_rgba(const std::vector<unsigned char>& bytes, int max_dimension,
   }
   if (FAILED(hr)) {
     *error = "图片像素格式转换失败";
-    finish();
     return false;
   }
 
@@ -127,7 +125,6 @@ bool decode_rgba(const std::vector<unsigned char>& bytes, int max_dimension,
     }
     if (FAILED(hr)) {
       *error = "图片缩放失败";
-      finish();
       return false;
     }
     source = scaler;
@@ -142,11 +139,9 @@ bool decode_rgba(const std::vector<unsigned char>& bytes, int max_dimension,
   if (FAILED(hr)) {
     *error = "读取图片像素失败";
     out->rgba.clear();
-    finish();
     return false;
   }
 
-  finish();
   return true;
 }
 

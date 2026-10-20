@@ -4,6 +4,7 @@
 
 #include <cstdint>
 
+#include <malloc.h>
 #include <windows.h>
 
 namespace sm {
@@ -20,6 +21,9 @@ bool guarded_call(void (*fn)(void*), void* user, std::uint32_t* out_code) {
     fn(user);
   } __except (code = static_cast<std::uint32_t>(GetExceptionCode()),
               EXCEPTION_EXECUTE_HANDLER) {
+    // 栈溢出后 guard page 已被消耗；不恢复的话异常处理器返回时可能再次
+    // 触发溢出，插件的一次崩溃会变成宿主反复崩溃。
+    if (code == EXCEPTION_STACK_OVERFLOW) ::_resetstkoflw();
     ok = false;
   }
 

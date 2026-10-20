@@ -5,7 +5,9 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "sm/plugin.h"
@@ -193,6 +195,11 @@ class PluginManager : public IPluginRunner,
  private:
   struct PluginType;
   struct Record;
+  struct PendingDisable {
+    std::string id;
+    std::string reason;
+    bool        crashed = false;
+  };
 
   struct ValidationResult {
     bool                     ok = false;
@@ -228,6 +235,9 @@ class PluginManager : public IPluginRunner,
 
   void EndCallFailed(const std::string& id, const char* method, const guard::Outcome& outcome);
 
+  // 调度线程不能直接改 ConfigStore/Router/UI：禁用请求先入队，由主线程执行。
+  void ApplyPendingDisables();
+
   config::ConfigStore& config_;
   IScheduleSink*       scheduler_ = nullptr;
   IUiSession*          ui_ = nullptr;
@@ -240,6 +250,15 @@ class PluginManager : public IPluginRunner,
   std::map<std::string, PluginType*>       type_index_;
   std::vector<std::unique_ptr<Record>>     records_;
   std::map<std::string, Record*>           index_;
+
+  // 只保护 index_/type_index_ 这两张表的查找与增删：调度线程的 RunStart 会
+  // 查 index_，主线程可能同时在增删记录。记录对象本身由 IsExecuting 保证
+  // 在执行期间不被销毁，因此查表返回的裸指针可以安全使用。
+  mutable std::mutex index_mutex_;
+  const std::thread::id main_thread_id_;
+
+  std::mutex                 pending_disable_mutex_;
+  std::vector<PendingDisable> pending_disables_;
 
   Arena          main_arena_;
   Arena          sched_arena_;

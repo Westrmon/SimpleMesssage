@@ -163,12 +163,7 @@ std::vector<std::string> FindPlaceholderNames(std::string_view input) {
 }
 
 bool IsKnownNotificationPlaceholder(std::string_view name) {
-  static const std::array<const char*, 24> kNames = {
-      "date",     "year",     "month",    "day",      "hour",     "minute",
-      "second",   "time",     "datetime", "timestamp", "title",   "content",
-      "summary",  "topic",    "level",    "id",       "url",     "icon",
-      "source",   "seq",      "ruleid",   "rulename", "phase",   "notifier"};
-  for (const char* known : kNames) {
+  for (std::string_view known : kNotificationPlaceholders) {
     if (name == known) return true;
   }
   return false;

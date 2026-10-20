@@ -278,7 +278,6 @@ struct PluginManager::PluginType {
   std::string    host_range;
   sm::PluginKind kind = sm::PluginKind::Source;
   std::size_t    setting_count = 0;
-  std::size_t    instance_count = 0;  // 快照时刷新，用于判断能否再添加实例
 };
 
 // 一个运行实例。id 是实例 id；类型相关的信息全部通过 type 取。
@@ -293,7 +292,8 @@ struct PluginManager::Record {
   bool enabled = true;
   bool auto_disabled = false;
   bool pending_teardown = false;
-  bool pending_removal = false;
+  // 调度线程会读它做快速跳过；主线程写，所以用 atomic 消除数据竞争。
+  std::atomic<bool> pending_removal{false};
   bool skip_stop = false;
   bool stop_pending = false;
   bool exit_pending = false;
@@ -312,7 +312,8 @@ struct PluginManager::Record {
   config::PluginSettings*     settings = nullptr;
 };
 
-PluginManager::PluginManager(config::ConfigStore& config) : config_(config) {}
+PluginManager::PluginManager(config::ConfigStore& config)
+    : config_(config), main_thread_id_(std::this_thread::get_id()) {}
 
 PluginManager::~PluginManager() {
   for (auto& holder : types_) {
@@ -360,11 +361,15 @@ PluginManager::PluginType* PluginManager::AddType(const std::string& file_stem,
 
   PluginType* const raw = type.get();
   types_.push_back(std::move(type));
-  type_index_[file_stem] = raw;
+  {
+    std::lock_guard<std::mutex> lock(index_mutex_);
+    type_index_[file_stem] = raw;
+  }
   return raw;
 }
 
 PluginManager::PluginType* PluginManager::FindType(const std::string& type_id) const {
+  std::lock_guard<std::mutex> lock(index_mutex_);
   const auto it = type_index_.find(type_id);
   return it != type_index_.end() ? it->second : nullptr;
 }
@@ -484,6 +489,7 @@ void PluginManager::TryLoadAndValidateType(PluginType& type) {
 
   const std::string canonical_id = type.meta->id;
   if (canonical_id != type.id) {
+    std::lock_guard<std::mutex> lock(index_mutex_);
     type_index_.erase(type.id);
     type.id = canonical_id;
     type_index_[type.id] = &type;
@@ -586,11 +592,15 @@ PluginManager::Record* PluginManager::AddRecord(const std::string& id, PluginTyp
 
   Record* const raw = record.get();
   records_.push_back(std::move(record));
-  index_[id] = raw;
+  {
+    std::lock_guard<std::mutex> lock(index_mutex_);
+    index_[id] = raw;
+  }
   return raw;
 }
 
 PluginManager::Record* PluginManager::FindRecord(const std::string& id) const {
+  std::lock_guard<std::mutex> lock(index_mutex_);
   const auto it = index_.find(id);
   return it != index_.end() ? it->second : nullptr;
 }
@@ -931,6 +941,10 @@ bool PluginManager::InitializeInstance(Record& record) {
 bool PluginManager::Enable(const std::string& id) {
   Record* const record = FindRecord(id);
   if (record == nullptr || record->pending_removal) return false;
+  // 自动禁用的 stop/exit 尚未完成时不能重建实例：那会和调度线程上的
+  // start() 并发，也会覆盖 pending_teardown 的收尾状态。
+  if (record->pending_teardown) return false;
+  if (scheduler_ != nullptr && scheduler_->IsExecuting(record->id)) return false;
 
   switch (record->state) {
     case PluginState::Discovered:
@@ -981,9 +995,14 @@ bool PluginManager::Disable(const std::string& id) {
   record->auto_disabled = false;
   record->skip_stop = false;
 
-  if (record->instance != nullptr) {
+  if (record->instance != nullptr &&
+      !(scheduler_ != nullptr && scheduler_->IsExecuting(record->id))) {
     CallScope scope(&main_arena_);
     CallStop(*record);
+  } else if (record->instance != nullptr) {
+    // start() 正在调度线程上执行：不能在这里并发调用 stop()。标记 teardown，
+    // 由主线程 PumpMainThread 在 start 返回后收尾。
+    record->pending_teardown = true;
   }
   if (scheduler_ != nullptr) scheduler_->Remove(record->id);
   SetState(*record, PluginState::Stopped, nullptr);
@@ -1257,6 +1276,15 @@ void PluginManager::DestroyInstance(Record& record) {
 
 void PluginManager::DisablePlugin(const std::string& id, const char* reason,
                                   bool crashed) {
+  if (std::this_thread::get_id() != main_thread_id_) {
+    // 调度线程（start 崩溃 / Abort）不能碰 ConfigStore、Router 与 UI 状态：
+    // 入队交给主线程，RunStart 返回后也不会再调度该 id。
+    std::lock_guard<std::mutex> lock(pending_disable_mutex_);
+    pending_disables_.push_back(
+        PendingDisable{id, reason != nullptr ? reason : "", crashed});
+    return;
+  }
+
   Record* const record = FindRecord(id);
   if (record == nullptr || record->pending_teardown || record->pending_removal) return;
 
@@ -1324,7 +1352,10 @@ bool PluginManager::TryFinishRemoval(Record& record) {
 }
 
 void PluginManager::EraseRecord(Record& record) {
-  index_.erase(record.id);
+  {
+    std::lock_guard<std::mutex> lock(index_mutex_);
+    index_.erase(record.id);
+  }
   for (auto it = records_.begin(); it != records_.end(); ++it) {
     if (it->get() != &record) continue;
     records_.erase(it);
@@ -1461,7 +1492,20 @@ void PluginManager::EndCallFailed(const std::string& id, const char* method,
   DisablePlugin(id, reason, true);
 }
 
+void PluginManager::ApplyPendingDisables() {
+  std::vector<PendingDisable> pending;
+  {
+    std::lock_guard<std::mutex> lock(pending_disable_mutex_);
+    pending.swap(pending_disables_);
+  }
+  for (const PendingDisable& item : pending) {
+    DisablePlugin(item.id, item.reason.c_str(), item.crashed);
+  }
+}
+
 std::size_t PluginManager::PumpMainThread() {
+  ApplyPendingDisables();
+
   for (auto& holder : records_) {
     if (holder->started_once.exchange(false) && holder->state == PluginState::Initialized) {
       SetState(*holder, PluginState::Running, nullptr);
@@ -1505,15 +1549,17 @@ std::vector<PluginInfo> PluginManager::Snapshot() const {
   std::vector<PluginInfo> result;
   result.reserve(records_.size() + types_.size());
 
-  const auto alive_count = [this](const PluginType& type) {
-    std::size_t count = 0;
-    for (const auto& holder : records_) {
-      if (holder->type == &type && !holder->pending_removal) ++count;
+  // 一次遍历统计每种类型的存活实例数。Snapshot() 是 const 且每帧调用，
+  // 不能像以前那样为每条记录回扫 records_，也不能修改 PluginType。
+  std::map<const PluginType*, std::size_t> alive_counts;
+  for (const auto& holder : records_) {
+    if (holder->type != nullptr && !holder->pending_removal) {
+      ++alive_counts[holder->type];
     }
-    return count;
-  };
+  }
 
-  const auto fill_type_metadata = [](const PluginType& type, PluginInfo* info) {
+  const auto fill_type_metadata = [](const PluginType& type, std::size_t instance_count,
+                                     PluginInfo* info) {
     info->type_id = type.id;
     info->type_name = type.name.empty() ? type.id : type.name;
     info->path = type.path;
@@ -1527,7 +1573,7 @@ std::vector<PluginInfo> PluginManager::Snapshot() const {
     info->subscriptions =
         sm::Span<const char*>{type.subscriptions.data(), type.subscriptions.size()};
     info->can_add_instance = type.valid && type.kind == sm::PluginKind::Source &&
-                             type.instance_count < kMaxInstancesPerType;
+                             instance_count < kMaxInstancesPerType;
   };
 
   for (const auto& holder : records_) {
@@ -1551,11 +1597,12 @@ std::vector<PluginInfo> PluginManager::Snapshot() const {
     info.is_instance = true;
 
     if (type != nullptr) {
-      type->instance_count = alive_count(*type);
-      info.instance_count = type->instance_count;
+      const auto count_it = alive_counts.find(type);
+      info.instance_count =
+          count_it != alive_counts.end() ? count_it->second : 0;
       info.instance_ordinal = static_cast<std::size_t>(
           std::max(1, InstanceOrdinal(record.id, type->id)));
-      fill_type_metadata(*type, &info);
+      fill_type_metadata(*type, info.instance_count, &info);
       info.can_delete_instance = type->valid && type->kind == sm::PluginKind::Source;
     }
     info.settings_path = util::path_join(config_.PathsRef().plugin_config_dir,
@@ -1575,22 +1622,16 @@ std::vector<PluginInfo> PluginManager::Snapshot() const {
   // 被用户删空的类型仍提供“添加实例”入口。
   for (const auto& holder : types_) {
     PluginType& type = *holder;
-    type.instance_count = alive_count(type);
-    bool has_record = false;
-    for (const auto& record : records_) {
-      if (record->type == &type && !record->pending_removal) {
-        has_record = true;
-        break;
-      }
-    }
-    if (has_record) continue;
+    const auto count_it = alive_counts.find(&type);
+    const std::size_t count = count_it != alive_counts.end() ? count_it->second : 0;
+    if (count != 0) continue;
 
     PluginInfo info;
     info.id = type.id;
     info.name = type.name.empty() ? type.id : type.name;
     info.reason = type.reason;
     info.is_instance = false;
-    fill_type_metadata(type, &info);
+    fill_type_metadata(type, count, &info);
 
     if (!type.valid) {
       info.state = PluginState::Rejected;
@@ -1611,12 +1652,17 @@ std::vector<PluginTypeInfo> PluginManager::SnapshotTypes() const {
   std::vector<PluginTypeInfo> result;
   result.reserve(types_.size());
 
+  std::map<const PluginType*, std::size_t> alive_counts;
+  for (const auto& holder : records_) {
+    if (holder->type != nullptr && !holder->pending_removal) {
+      ++alive_counts[holder->type];
+    }
+  }
+
   for (const auto& holder : types_) {
     const PluginType& type = *holder;
-    std::size_t count = 0;
-    for (const auto& record : records_) {
-      if (record->type == &type && !record->pending_removal) ++count;
-    }
+    const auto count_it = alive_counts.find(&type);
+    const std::size_t count = count_it != alive_counts.end() ? count_it->second : 0;
 
     PluginTypeInfo info;
     info.type_id = type.id;

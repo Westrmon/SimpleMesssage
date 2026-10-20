@@ -60,7 +60,12 @@ class OpenGlBackend final : public IRenderBackend {
     window_ = nullptr;
   }
 
-  void NewFrame() override { ImGui_ImplOpenGL3_NewFrame(); }
+  void NewFrame() override {
+    // 每张表面有自己的 ImGui 上下文；NewFrame 会在当前 GL 上下文里创建/更新
+    // 后端设备对象，因此必须先切回本表面的上下文。
+    MakeContextCurrent();
+    ImGui_ImplOpenGL3_NewFrame();
+  }
 
   bool BeginFrame(const float clear_rgba[4]) override {
     if (window_ == nullptr) return false;

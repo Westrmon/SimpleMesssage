@@ -304,7 +304,7 @@ class ImGuiNotifier final : public PluginBase {
     const float footer = ImGui::GetFrameHeightWithSpacing();
     ImGui::InputTextMultiline("##sm_detail_body",
                               const_cast<char *>(notice.content.c_str()),
-                              notice.content.length(),
+                              notice.content.length() + 1,
                               ImVec2(ImGui::GetCursorPos().x + ImGui::GetContentRegionAvail().x, -footer),
                               ImGuiInputTextFlags_ReadOnly | ImGuiInputTextFlags_WordWrap);
 
