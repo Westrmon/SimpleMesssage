@@ -1,4 +1,4 @@
-// SimpleMessage — 应用外壳的实现：启动 12 步、消息循环、关停 8 步
+// SimpleMessage — 应用外壳的实现
 #include "host/app.h"
 
 #include <cstdio>
@@ -48,7 +48,7 @@ void LogAttachedMonitors() {
   const std::vector<MonitorInfo> monitors = EnumerateMonitors();
   if (monitors.empty()) {
     sm::log::Write(sm::LogLevel::Warn, "window",
-                   "没有枚举到任何显示器，通知表面按主显示器那一路摆");
+                   "无法枚举显示器, 默认出现在主显示器上");
     return;
   }
   for (const MonitorInfo& monitor : monitors) {
@@ -150,7 +150,7 @@ int App::Run(const std::vector<std::string>& args) {
   if (!InitPlatform()) return ExitCodeValue(ExitCode::kPlatform);
 
   if (!WireSubsystems()) {
-    sm::log::WriteCritical(sm::LogLevel::Error, "host", "控制面板未能建立（内存不足？），启动中止");
+    sm::log::WriteCritical(sm::LogLevel::Error, "host", "无法创建主面板（内存不足？），终止启动");
     return ExitCodeValue(ExitCode::kFatal);
   }
 
@@ -266,7 +266,7 @@ ExitCode App::StartupConfigAndLogging() {
 
   if (load == config::ConfigStore::LoadResult::SchemaTooNew) {
     sm::log::WriteCritical(sm::LogLevel::Error, "host",
-                           "config.toml 的 schema_version 高于本宿主，拒绝启动（退出码 2）");
+                           "config.toml 的 schema_version 高于主版本，无法启动（退出码 2）");
     return ExitCode::kConfigTooNew;
   }
 
@@ -280,7 +280,7 @@ ExitCode App::StartupConfigAndLogging() {
   std::string error;
   ui_state_load_ = LoadUiState(UiStatePath(paths_), &ui_state_, &error);
   if (ui_state_load_ == UiStateLoad::Corrupt) {
-    sm::log::Writef(sm::LogLevel::Warn, "host", "界面状态文件已损坏，本次用默认值（%s）",
+    sm::log::Writef(sm::LogLevel::Warn, "host", "界面配置无法应用，将使用默认值（%s）",
                     error.c_str());
   }
 
@@ -295,7 +295,7 @@ bool App::LoadRules(bool reload) {
     text = DefaultRulesFileText();
     if (safe_mode_) {
       sm::log::Writef(sm::LogLevel::Info, "rules",
-                      "规则文件不存在（安全模式不落盘），本次使用内存中的默认规则：%s",
+                      "规则文件不存在（安全模式），使用默认规则：%s",
                       path.c_str());
     } else {
       std::string error;
@@ -304,7 +304,7 @@ bool App::LoadRules(bool reload) {
                         "规则文件不存在，已生成默认模板：%s", path.c_str());
       } else {
         sm::log::Writef(sm::LogLevel::Warn, "rules",
-                        "规则文件不存在且无法写入默认模板（%s），本次使用内存中的默认规则",
+                        "规则文件不存在且无法写入默认模板（%s），使用默认规则",
                         error.c_str());
       }
     }
@@ -337,11 +337,11 @@ bool App::LoadRules(bool reload) {
   if (parse_failed) {
     if (reload) {
       sm::log::Write(sm::LogLevel::Error, "rules",
-                     "规则重载失败，继续使用上一次的规则集");
+                     "规则重载失败，恢复上次规则");
       return false;
     }
     sm::log::Write(sm::LogLevel::Error, "rules",
-                   "规则文件不可用，本次不加载任何规则");
+                   "规则文件不可用，取消加载规则");
   }
 
   rules_ = std::move(parsed);
@@ -375,7 +375,7 @@ bool App::AcquireSingleInstance() {
   }
 
   if (!platform::notify_existing_instance(paths_.config_dir.c_str())) {
-    sm::log::Write(sm::LogLevel::Warn, "host", "未能唤起已有实例（它可能正在启动中）");
+    sm::log::Write(sm::LogLevel::Warn, "host", "未能唤起已有实例（可能正在启动中）");
   }
   sm::log::Write(sm::LogLevel::Warn, "host", "已有实例在运行，本次启动退出");
   return false;
@@ -498,7 +498,7 @@ void App::FrameStep(std::int64_t now_ms) {
 
   if (delivered > 0 && notify_empty_since_ms_ != 0) {
     if (NotifyDormant(now_ms)) {
-      sm::log::Write(sm::LogLevel::Info, "ui", "有新通知到达，通知表面从休眠中醒来");
+      sm::log::Write(sm::LogLevel::Info, "ui", "有新通知到达，唤醒通知");
     }
     ClearNotifyDormancy();
   }
@@ -530,7 +530,7 @@ void App::FrameStep(std::int64_t now_ms) {
   if (notify_dormant && !notify_dormant_logged_) {
     notify_dormant_logged_ = true;
     sm::log::Writef(sm::LogLevel::Info, "ui",
-                    "通知表面没有内容已 %lld 秒，进入休眠（不再渲染）",
+                    "通知没有内容已 %lld 秒，不再渲染",
                     static_cast<long long>(kNotifyDormantMs / 1000));
   }
   if (session_.notify_runtime_alive() && notify_frame_ != nullptr &&
@@ -877,7 +877,6 @@ void App::NotifyPlacement(const config::NotifyWindowConfig& want, int w, int h,
 void App::PlaceNotifyWindow(const ContentBounds& content) {
   if (notify_window_ == nullptr || !notify_window_->alive()) return;
 
-  // 没有内容必须把整扇窗口藏掉：一扇不透明的空窗点得到、看不见，还会挡住底下的窗口。
   if (content.empty) {
     if (notify_window_->visible()) notify_window_->Hide();
     return;
@@ -888,7 +887,6 @@ void App::PlaceNotifyWindow(const ContentBounds& content) {
   int y = 0;
   NotifyPlacement(want, content.w, content.h, &x, &y);
 
-  // 尺寸与位置必须同一帧一起定下来（否则卡片逐帧跳），且只在真变了时才 SetRect。
   int cur_x = 0, cur_y = 0, cur_w = 0, cur_h = 0;
   notify_window_->GetRect(&cur_x, &cur_y, &cur_w, &cur_h);
   if (cur_x != x || cur_y != y || cur_w != content.w || cur_h != content.h) {
@@ -906,7 +904,7 @@ IUiRuntime* App::CreateNotifyRuntime() {
   options.title = strings::kNotifyWindowTitle;
   options.width = kNotifyDefaultWidth;
   options.height = kNotifyDefaultHeight;
-  options.visible = false;  // 刚建出来的那帧内容尺寸还没量过，先显示会闪一下错误的大小
+  options.visible = false;
   options.traits.decorated = false;
   options.traits.resizable = false;
   options.traits.floating = true;
@@ -943,7 +941,7 @@ IUiRuntime* App::NotifyRuntimeFactoryThunk(void* user) {
 
 void App::HandleNotifyCloseRequest() {
   sm::log::Write(sm::LogLevel::Info, "ui",
-                 "通知表面收到关闭请求（该不该消失由引用计数决定）");
+                 "通知收到关闭请求");
 }
 
 void App::NotifyCloseRequestThunk(void* user) {

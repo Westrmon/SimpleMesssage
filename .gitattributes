@@ -1,0 +1,2 @@
+# Git Bash 直接执行根目录的构建脚本需要 LF 行尾。
+/build.sh text eol=lf

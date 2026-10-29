@@ -183,8 +183,22 @@ struct EvalContext {
   std::array<bool, 4>        has{{false, false, false, false}};
 };
 
-std::string ExpandTemplate(const CompiledTemplate& text, EvalContext* context,
-                           bool* missing_capture) {
+// 捕获组值按路径分量清洗，并转义花括号：save.path 随后还要展开
+// {name} 占位符，而捕获值来自通知内容，必须保持字面量，不能被二次解释。
+void AppendCapturedPathValue(std::string* out, const std::string& value) {
+  const std::string safe = SanitizePathValue(value);
+  for (const char c : safe) {
+    if (c == '{' || c == '}') out->push_back(c);
+    out->push_back(c);
+  }
+}
+
+// sanitize_captures = true 时（save.path），捕获组值按路径分量清洗，
+// 与 {name} 占位符在 Path 模式下的处理一致：捕获组来自不可信的通知内容，
+// 不能让它引入目录分隔符、盘符或 .. 路径段。
+std::string ExpandTemplate(const CompiledTemplate& text,
+                           const EvalContext* context, bool* missing_capture,
+                           bool sanitize_captures = false) {
   std::string out;
   for (const TemplateSegment& segment : text.segments) {
     if (!segment.is_capture) {
@@ -198,7 +212,13 @@ std::string ExpandTemplate(const CompiledTemplate& text, EvalContext* context,
     const std::cmatch& match = context->matches[static_cast<std::size_t>(segment.field)];
     if (segment.group >= 0 &&
         static_cast<std::size_t>(segment.group) < match.size()) {
-      out += match[static_cast<std::size_t>(segment.group)].str();
+      const std::string value =
+          match[static_cast<std::size_t>(segment.group)].str();
+      if (sanitize_captures) {
+        AppendCapturedPathValue(&out, value);
+      } else {
+        out += value;
+      }
     }
   }
   return out;
@@ -579,6 +599,7 @@ struct Rule::Compiled {
   CompiledTemplate content;
   CompiledTemplate summary;
   CompiledTemplate time;
+  CompiledTemplate save_path;
 };
 
 struct RuleSet::Runtime {
@@ -586,6 +607,7 @@ struct RuleSet::Runtime {
   std::atomic<std::int64_t>  hits{0};
   std::atomic<std::int64_t>  blocked{0};
   std::atomic<bool>          warned_missing_capture{false};
+  std::atomic<bool>          warned_missing_save_capture{false};
   std::atomic<bool>          warned_empty_rewrite{false};
   std::atomic<bool>          warned_invalid_time{false};
   std::atomic<bool>          warned_empty_time{false};
@@ -981,6 +1003,16 @@ bool BuildRule(const toml::table& table, std::size_t index,
               prefix + " 的 rewrite.time 模板无效：" + error + "，已跳过");
       return false;
     }
+    // save.path 与 rewrite 共用同一套 $字段.组号 语法，因此也在加载期
+    // 校验捕获组引用；写错组号或引用没有 =~ 的字段会整条跳过。
+    if (rule.save.enabled && !rule.save.path.empty() &&
+        !BuildTemplate(rule.save.path, kFieldTitle,
+                       compiled->positive_count, compiled->group_count,
+                       &compiled->save_path, &error)) {
+      AddDiag(diagnostics, RuleDiagnostic::Severity::Warn,
+              prefix + " 的 save.path 模板无效：" + error + "，已跳过");
+      return false;
+    }
   } else {
     // auto_summary 只接受自己的参数；其它字段是明显的误用，提示后忽略。
     for (const char* key :
@@ -1229,12 +1261,32 @@ void WarnOnce(std::atomic<bool>* flag, RuleDiagnostics* warnings,
   AddDiag(warnings, RuleDiagnostic::Severity::Warn, message);
 }
 
+// save.path 的 $字段.组号 必须在 rewrite 之前展开：rewrite 会改写
+// RuleFields 的缓冲区，而 EvalContext 里的 cmatch 指向这些缓冲区。
+// 展开结果交给 AddSaveHit，随快照一起传给保存器。
+std::string ExpandSavePath(const Rule& rule, const EvalContext& context,
+                           std::atomic<bool>* warned_missing_capture,
+                           RuleDiagnostics* runtime_warnings) {
+  if (!rule.save.enabled || rule.save.path.empty()) return {};
+  bool missing_capture = false;
+  std::string path =
+      ExpandTemplate(rule.compiled->save_path, &context, &missing_capture,
+                     /*sanitize_captures=*/true);
+  if (missing_capture) {
+    WarnOnce(warned_missing_capture, runtime_warnings,
+             "规则 " + rule.id +
+                 " 的 save.path 引用了未参与求值的字段捕获组，替换为空");
+  }
+  return path;
+}
+
 // 在规则自己的 rewrite 之后取快照，且不受同趟后续规则影响。
 void AddSaveHit(const Rule& rule, std::size_t index, const RuleFields& fields,
-                RuleSaveHits* save_hits) {
+                std::string save_path, RuleSaveHits* save_hits) {
   if (save_hits == nullptr || !rule.save.enabled) return;
   RuleSaveHit hit;
   hit.rule_index = index;
+  hit.save_path = std::move(save_path);
   hit.title = std::string(fields.title());
   hit.content = std::string(fields.content());
   hit.summary = std::string(fields.summary());
@@ -1355,9 +1407,17 @@ bool RuleSet::ApplySource(RuleFields* fields, const std::string& source_plugin,
 
     runtime.hits.fetch_add(1, std::memory_order_relaxed);
 
+    // 必须在 rewrite 之前展开：rewrite 可能移动捕获组指向的缓冲区。
+    std::string save_path;
+    if (save_hits != nullptr) {
+      save_path = ExpandSavePath(rule, context,
+                                 &runtime.warned_missing_save_capture,
+                                 runtime_warnings);
+    }
+
     if (rule.drop) {
       runtime.blocked.fetch_add(1, std::memory_order_relaxed);
-      AddSaveHit(rule, i, *fields, save_hits);
+      AddSaveHit(rule, i, *fields, std::move(save_path), save_hits);
       return false;
     }
 
@@ -1370,7 +1430,7 @@ bool RuleSet::ApplySource(RuleFields* fields, const std::string& source_plugin,
                    runtime_warnings);
     }
 
-    AddSaveHit(rule, i, *fields, save_hits);
+    AddSaveHit(rule, i, *fields, std::move(save_path), save_hits);
     if (rule.handle) return true;
   }
   return true;
@@ -1394,9 +1454,17 @@ bool RuleSet::ApplyDelivery(RuleFields* fields, const std::string& source_plugin
 
     runtime.hits.fetch_add(1, std::memory_order_relaxed);
 
+    // 必须在 rewrite 之前展开：rewrite 可能移动捕获组指向的缓冲区。
+    std::string save_path;
+    if (save_hits != nullptr) {
+      save_path = ExpandSavePath(rule, context,
+                                 &runtime.warned_missing_save_capture,
+                                 runtime_warnings);
+    }
+
     if (rule.drop) {
       runtime.blocked.fetch_add(1, std::memory_order_relaxed);
-      AddSaveHit(rule, i, *fields, save_hits);
+      AddSaveHit(rule, i, *fields, std::move(save_path), save_hits);
       return false;
     }
 
@@ -1409,7 +1477,7 @@ bool RuleSet::ApplyDelivery(RuleFields* fields, const std::string& source_plugin
                    runtime_warnings);
     }
 
-    AddSaveHit(rule, i, *fields, save_hits);
+    AddSaveHit(rule, i, *fields, std::move(save_path), save_hits);
     if (rule.handle) return true;
   }
   return true;

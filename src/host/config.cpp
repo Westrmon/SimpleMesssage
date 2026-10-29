@@ -223,8 +223,6 @@ void ReadEnum(const toml::node& node, const sm::SettingDef& def, Reader& r,
 
 using MigrateFn = bool (*)(toml::table& table, Reader& r);
 
-// v1 的 [plugins] 是“id -> 启用”表；v2 改成 [[instances]]。迁移只做结构转换，
-// 不在这里判断某个 id 是否对应已安装的插件 —— 那需要插件发现阶段的信息。
 bool MigrateV1ToV2(toml::table& table, Reader& r) {
   std::vector<std::string> warnings;
   const bool ok = MigratePluginsV1(&table, &warnings);
@@ -308,8 +306,7 @@ ConfigStore::~ConfigStore() = default;
 PluginSettings::PluginSettings() = default;
 PluginSettings::~PluginSettings() = default;
 
-// mutex 不可移动，手写移动语义：移动期间锁住源对象，避免和插件线程的
-// 设置读取同时发生。
+
 PluginSettings::PluginSettings(PluginSettings&& other) noexcept {
   std::lock_guard<std::recursive_mutex> lock(other.mutex_);
   owner_ = other.owner_;

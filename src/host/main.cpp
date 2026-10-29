@@ -1,7 +1,4 @@
 // SimpleMessage — 宿主进程的"主函数"
-//
-// 真正的入口符号由平台层提供（src/platform/<平台>/entry_<平台>.cpp）；
-// 这里只登记一个函数，避免在 Windows 上出现第二个 main()。
 
 #include <string>
 #include <vector>

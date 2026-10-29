@@ -37,7 +37,12 @@ std::string LabelOf(const sm::SettingDef& def) {
 void TooltipFor(const sm::SettingDef& def) {
   if (def.description == nullptr || def.description[0] == '\0') return;
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
-    ImGui::SetTooltip("%s", def.description);
+    ImGui::SetNextWindowSizeConstraints(
+        ImVec2(200.0f, 0.0f),
+        ImVec2(500.0f, FLT_MAX));
+    ImGui::BeginTooltip();
+    ImGui::TextWrapped("%s", def.description);
+    ImGui::EndTooltip();
   }
 }
 

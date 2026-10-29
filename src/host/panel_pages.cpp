@@ -231,18 +231,62 @@ void UiPanel::DrawOverviewPage() {
   ImGui::SeparatorText(strings::kSecNotifyStats);
   if (setup_.pipeline != nullptr) {
     const NotificationPipeline::Stats stats = setup_.pipeline->SnapshotStats();
-    ImGui::Text(strings::kStatProducedFormat, static_cast<long long>(stats.produced));
-    ImGui::SameLine();
-    ImGui::Text(strings::kStatQueuedFormat,
-                static_cast<long long>(setup_.pipeline->queued()));
-    ImGui::SameLine();
-    ImGui::Text(strings::kStatDroppedFormat, static_cast<long long>(stats.dropped));
-    ImGui::SameLine();
-    ImGui::Text(strings::kStatUndeliveredFormat, static_cast<long long>(stats.undelivered));
-    if (setup_.plugins != nullptr) {
-      ImGui::SameLine();
-      ImGui::Text(strings::kStatTaskQueueFormat,
-                  static_cast<int>(setup_.plugins->main_thread_queue_size()));
+
+    char produced_text[256];
+    char queued_text[256];
+    char dropped_text[256];
+    char undelivered_text[256];
+    char task_queue_text[256];
+
+    std::snprintf(produced_text, sizeof(produced_text),
+                  strings::kStatProducedFormat,
+                  static_cast<long long>(stats.produced));
+    std::snprintf(queued_text, sizeof(queued_text),
+                  strings::kStatQueuedFormat,
+                  static_cast<long long>(setup_.pipeline->queued()));
+    std::snprintf(dropped_text, sizeof(dropped_text),
+                  strings::kStatDroppedFormat,
+                  static_cast<long long>(stats.dropped));
+    std::snprintf(undelivered_text, sizeof(undelivered_text),
+                  strings::kStatUndeliveredFormat,
+                  static_cast<long long>(stats.undelivered));
+
+    const float content_right_x =
+        ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+
+    bool has_previous_item = false;
+
+    const auto draw_wrapped = [&](const char *text)
+    {
+      if (has_previous_item)
+      {
+        const float next_item_x =
+            ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x;
+        const float text_width = ImGui::CalcTextSize(text).x;
+
+        if (next_item_x + text_width <= content_right_x)
+        {
+          ImGui::SameLine();
+        }
+      }
+
+      ImGui::TextWrapped("%s", text);
+      has_previous_item = true;
+    };
+
+    draw_wrapped(produced_text);
+    draw_wrapped(queued_text);
+    draw_wrapped(dropped_text);
+    draw_wrapped(undelivered_text);
+
+    if (setup_.plugins != nullptr)
+    {
+      std::snprintf(task_queue_text, sizeof(task_queue_text),
+                    strings::kStatTaskQueueFormat,
+                    static_cast<int>(
+                        setup_.plugins->main_thread_queue_size()));
+
+      draw_wrapped(task_queue_text);
     }
     if (stats.dropped > 0) ImGui::TextDisabled("%s", strings::kDroppedHint);
     if (stats.undelivered > 0) ImGui::TextDisabled("%s", strings::kUndeliveredHint);
@@ -685,10 +729,11 @@ void UiPanel::DrawNotificationsPage() {
       }
     }
 
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-    ImGui::TextWrapped("%s", strings::kNotifySurfaceHint);
-    if (!want_known) ImGui::TextWrapped("%s", strings::kNotifyMonitorMissingHint);
-    ImGui::PopStyleColor();
+    if (!want_known){
+      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+      ImGui::TextWrapped("%s", strings::kNotifyMonitorMissingHint);
+      ImGui::PopStyleColor();
+    }
     ImGui::PopID();
   }
 
@@ -705,9 +750,6 @@ void UiPanel::DrawNotificationsPage() {
       }
     }
     if (readonly) ImGui::EndDisabled();
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-    ImGui::TextWrapped("%s", strings::kAllowRuleSaveHint);
-    ImGui::PopStyleColor();
   }
 
   ImGui::TextUnformatted(strings::kFilterLevel);
@@ -809,7 +851,6 @@ void UiPanel::ExportNotifications(const std::vector<const OwnedNotification*>& i
 void UiPanel::DrawRulesPage() {
   if (setup_.host == nullptr || setup_.config == nullptr) return;
 
-  ImGui::TextDisabled("%s", strings::kRulesReadonly);
   ImGui::TextDisabled(strings::kRulesFileFormat,
                       setup_.config->PathsRef().rules_file.c_str());
 
@@ -1008,8 +1049,6 @@ void UiPanel::DrawRulesPage() {
 void UiPanel::DrawRoutingPage() {
   if (setup_.router == nullptr || setup_.config == nullptr) return;
 
-  ImGui::TextDisabled("%s", strings::kRoutingReadonly);
-
   ImGui::SeparatorText(strings::kRoutingTable1);
   const std::vector<Subscriber>& subscribers = setup_.router->subscribers();
   if (subscribers.empty()) {
@@ -1100,8 +1139,7 @@ void UiPanel::DrawRoutingPage() {
     }
   }
   ImGui::Separator();
-  ImGui::TextWrapped(strings::kRoutingFooterFormat,
-                     setup_.config->PathsRef().config_file.c_str());
+  ImGui::TextWrapped("%s", setup_.config->PathsRef().config_file.c_str());
 }
 
 void UiPanel::DrawLogPage() {
@@ -1225,7 +1263,6 @@ void UiPanel::DrawAboutPage() {
       setup_.config->SetUiFontSize(font_size);
       setup_.session->SetFontSize(font_size);
     }
-    ImGui::TextDisabled("%s", strings::kFontSizeHint);
     const std::string font_file = setup_.host->font_file_path();
     if (font_file.empty()) {
       ImGui::TextWrapped(strings::kFontFileFormat, strings::kFontFallbackBuiltin);
@@ -1277,7 +1314,6 @@ void UiPanel::DrawAboutPage() {
   }
 
   ImGui::SeparatorText(strings::kSecExit);
-  ImGui::TextDisabled("%s", strings::kExitHint);
   if (ImGui::Button(strings::kExitButton)) setup_.host->RequestExit();
 }
 

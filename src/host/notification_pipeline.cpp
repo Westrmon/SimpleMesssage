@@ -110,7 +110,7 @@ void NotificationPipeline::SaveRuleHit(const RuleSet& rules,
   view.level = hit.level;
   view.importance = hit.importance;
   view.time_unix_ms = hit.time_unix_ms;
-  sink->Save(rule, view, delivery_phase, notifier_id);
+  sink->Save(rule, view, delivery_phase, notifier_id, hit.save_path);
 }
 
 void NotificationPipeline::SetRules(std::shared_ptr<RuleSet> rules) {

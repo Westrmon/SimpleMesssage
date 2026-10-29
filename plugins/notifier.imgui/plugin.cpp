@@ -239,8 +239,11 @@ class ImGuiNotifier final : public PluginBase {
         if (toast_wrap < 80.0f) toast_wrap = 80.0f;
       }
 
+      ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + toast_wrap);
       ImGui::TextColored(LevelColor(toast.notice.level), "[%s] %s",
-                         LevelText(toast.notice.level), toast.notice.title.c_str());
+                         LevelText(toast.notice.level),
+                         toast.notice.title.c_str());
+      ImGui::PopTextWrapPos();
       ImGui::SameLine();
       ImGui::TextDisabled("%s", AgoText(now, toast.notice.time_unix_ms).c_str());
 

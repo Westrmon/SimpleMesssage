@@ -54,6 +54,7 @@ jobs:
             'build/Release/plugins/notifier.console.dll',
             'build/Release/plugins/notifier.imgui.dll',
             'build/Release/plugins/notifier.sound.dll',
+            'build/Release/plugins/notifier.wintoast.dll',
             'build/Release/plugins/source.email.dll',
             'build/Release/plugins/source.gotify.dll',
             'build/Release/plugins/source.webhook.dll'
@@ -70,6 +71,7 @@ jobs:
           Copy-Item build/Release/sm_host.exe, build/Release/sm_imgui.dll, build/Release/sm_curl.dll dist/
           Copy-Item build/Release/plugins dist/plugins -Recurse
           Copy-Item THIRD-PARTY-NOTICES.txt dist/
+          Copy-Item scripts/win/install-autostart.bat, scripts/win/uninstall-autostart.bat dist/
 
       - name: 上传产物
         uses: actions/upload-artifact@v4
@@ -191,11 +193,12 @@ jobs:
           Copy-Item build/Release/sm_host.exe, build/Release/sm_imgui.dll, build/Release/sm_curl.dll dist/
           Copy-Item build/Release/plugins dist/plugins -Recurse
           Copy-Item THIRD-PARTY-NOTICES.txt dist/
+          Copy-Item scripts/win/install-autostart.bat, scripts/win/uninstall-autostart.bat dist/
 
       - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
-          name: SimpleMessage-win7-compat
+          name: SimpleMessage-win7
           path: dist/
           if-no-files-found: error
 
@@ -233,11 +236,9 @@ jobs:
           | 包 | 适用 | CRT |
           |---|---|---|
           | `SimpleMessage-win64-<版本>.zip` | Windows 10 / 11 x64 | 动态（需要匹配的 VC 运行时） |
-          | `SimpleMessage-win7-compat-<版本>.zip` | 目标为 Windows 7 SP1 及以后系统的 x64 版本 | 按项目的 Win7 兼容配置使用静态 CRT；实际运行仍取决于系统补丁、API 依赖和驱动 |
+          | `SimpleMessage-win7-<版本>.zip` | 目标为 Windows 7 SP1 及以后系统的 x64 版本 | 按项目的 Win7 兼容配置使用静态 CRT；实际运行仍取决于系统补丁、API 依赖和驱动 |
 
-          Win7 版本使用 VS 2022 中的 MSVC v142（14.29）和 Windows SDK 10.0.19041.0，并开启项目的 `SM_WIN7_COMPAT` 配置。托管 CI 不是 Windows 7 系统，因此 CI 仅能验证兼容配置的构建和测试，不能替代 Windows 7 SP1 实机验证。
-
-          安装插件等同于运行一个 exe —— 宿主不提供沙箱，只应放入信任的 DLL。第三方组件与许可证见包内 `THIRD-PARTY-NOTICES.txt`。
+          宿主不提供沙箱，只应放入信任的 DLL。第三方组件与许可证见包内 `THIRD-PARTY-NOTICES.txt`。
           EOF
           cat notes.md
 

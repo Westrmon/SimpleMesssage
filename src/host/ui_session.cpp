@@ -250,8 +250,6 @@ class ImGuiRuntime final : public IUiRuntime, public IUiFrameRenderer {
     std::uint64_t last_frame = 0;
   };
 
-  // 图标纹理按来源串缓存。上限只是防御性的：超出时只回收"至少两帧没再用过"
-  // 的那些 —— 本帧画过的纹理可能已经被记录进 ImDrawData，不能当场释放。
   void EvictTextures() {
     constexpr std::size_t kMaxTextures = 128;
     if (textures_.size() < kMaxTextures) return;
@@ -373,7 +371,7 @@ void UiSession::SetFontSize(int px) {
 }
 
 void UiSession::SetContentScale(Surface surface, float scale) {
-  if (surface == Surface::kDetail) return;  // 详情窗口的缩放由 App 直接转发给各自的 runtime
+  if (surface == Surface::kDetail) return;
   SurfaceState& target = (surface == Surface::kNotify) ? notify_ : panel_;
   if (target.runtime != nullptr) target.runtime->SetContentScale(scale);
 }
@@ -381,8 +379,6 @@ void UiSession::SetContentScale(Surface surface, float scale) {
 UiSession::Changes UiSession::Tick(std::int64_t now_ms) {
   ExpireSurfaces(now_ms);
 
-  // 没有通知表面时允许下次重新尝试创建；这样一次失败（例如当时的窗口
-  // 还没有可用的 GL 上下文）不会让通知窗口永久消失。
   if (surfaces_.empty()) notify_factory_attempted_ = false;
 
   if (notify_.runtime == nullptr && notify_factory_ != nullptr &&

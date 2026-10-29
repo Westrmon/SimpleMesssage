@@ -17,7 +17,7 @@ platform::window::WorkArea ResolveWorkArea(const std::string& name) {
       if (monitor.device == name) return monitor.work;
     }
     sm::log::Writef(sm::LogLevel::Warn, "window",
-                    "[notify_window] monitor = \"%s\" 找不到这块显示器，改用主显示器",
+                    "[notify_window] monitor = \"%s\" 显示器无效，改用主显示器",
                     name.c_str());
   }
 

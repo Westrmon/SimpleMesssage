@@ -27,7 +27,7 @@ inline constexpr const char* kPageRouting = "路由";
 inline constexpr const char* kPageLog = "日志";
 inline constexpr const char* kPageAbout = "关于";
 
-inline constexpr const char* kSafeModeBanner = "安全模式：未加载任何插件，也不会写回配置。";
+inline constexpr const char* kSafeModeBanner = "安全模式：无插件，无配置。";
 inline constexpr const char* kSafeModeHint = "以 --safe-mode 启动。确认配置修好后重新启动即可恢复正常。";
 inline constexpr const char* kConfigSaveFailedBanner = "配置未能保存到磁盘，改动目前只存在于内存中。";
 inline constexpr const char* kConfigSaveFailedHint =
@@ -167,12 +167,11 @@ inline constexpr const char* kResetSettingsTitle = "重置为默认值？";
 inline constexpr const char* kResetSettingsBodyFormat =
     "会删掉 %s 的设置文件，并把它声明的每一项恢复为默认值。\n"
     "插件下次读取设置时立即拿到默认值；这一项无法撤销。";
-inline constexpr const char* kSettingDirtyHint =
-    "改动立即对插件生效，写盘有防抖 —— 不需要“应用”按钮。";
+inline constexpr const char* kSettingDirtyHint = "改动立即生效";
 inline constexpr const char* kSettingsUnavailableFormat =
-    "插件当前没有加载（%s），设置表单要等它重新启用之后才能生成。";
+    "插件当前没有加载（%s）";
 inline constexpr const char* kSettingSchemaTooNew =
-    "这个插件的设置文件版本高于本宿主，界面不会写回它 —— 手工编辑也请谨慎。";
+    "此插件的配置版本高于本宿主";
 inline constexpr const char* kSettingBrowse = "浏览…";
 inline constexpr const char* kSettingPreview = "试听";
 inline constexpr const char* kSettingSoundFilter = "WAV / MP3 文件 (*.wav;*.mp3)";
@@ -204,20 +203,14 @@ inline constexpr const char* kNotifyCornerTopLeft = "左上";
 inline constexpr const char* kNotifyCornerTopRight = "右上";
 inline constexpr const char* kNotifyCornerBottomLeft = "左下";
 inline constexpr const char* kNotifyCornerBottomRight = "右下";
-inline constexpr const char* kNotifySurfaceHint =
-    "浮层出现的那扇窗口贴在这块屏幕的这个角上，改动立即生效；这里写回的就是 "
-    "config.toml 的 [notify_window]。";
 inline constexpr const char* kNotifyMonitorMissingHint =
-    "配置里的这块屏幕现在不在系统里 —— 通知会临时弹在主屏上，插回显示器即恢复。";
+    "无法找到当前显示器, 将会显示在主显示器上。请检查显示器是否已断开或被禁用。";
 
 inline constexpr const char* kSecRuleSave = "规则保存";
 inline constexpr const char* kAllowRuleSave = "允许规则保存通知内容";
-inline constexpr const char* kAllowRuleSaveHint =
-    "关闭时所有规则的 save 都不生效；开启后无视通知来源，命中的规则会立即把"
-    "通知追加写入文件。配置写回 config.toml 的 [app] allow_rule_save。";
 
 inline constexpr const char* kHistoryEmpty = "内存历史里还没有通知。";
-inline constexpr const char* kHistoryCleared = "历史已清空（seq 不重置）。";
+inline constexpr const char* kHistoryCleared = "历史已清空";
 
 inline constexpr const char* kExportFiltered = "导出当前筛选结果…";
 inline constexpr const char* kExportAll = "导出全部历史…";
@@ -225,9 +218,7 @@ inline constexpr const char* kExportOkFormat = "已导出 %d 条到 %s";
 inline constexpr const char* kExportFailedFormat = "导出失败（%s）：%s";
 inline constexpr const char* kClearHistory = "清空历史";
 inline constexpr const char* kClearHistoryTitle = "清空通知历史？";
-inline constexpr const char* kClearHistoryBody =
-    "只清掉内存里的最近通知，已经导出的文件不受影响，之后新到的通知照常显示。\n"
-    "通知的 seq 不会重置 —— 重置会让旧导出文件里的 seq 与新通知撞车。";
+inline constexpr const char* kClearHistoryBody = "清除临时通知，已经导出的文件不受影响";
 
 inline constexpr const char* kDetailContent = "完整内容";
 inline constexpr const char* kDetailActions = "动作";
@@ -237,20 +228,17 @@ inline constexpr const char* kDetailUnrouted =
 inline constexpr const char* kSelectRowHint = "点列表里的一行看详情。";
 
 // ---- 规则页 ----
-inline constexpr const char* kRulesReadonly =
-    "规则内容只能写在 rules.toml 里；这一页只负责启用/禁用与查看，"
-    "启用状态写回 config.toml 的 [rules]。";
 inline constexpr const char* kRulesReload = "重新加载规则";
 inline constexpr const char* kRulesFileFormat = "规则文件：%s";
-inline constexpr const char* kRulesReloadOkFormat = "已重新加载 %d 条规则。";
+inline constexpr const char* kRulesReloadOkFormat = "已重新加载 %d 条规则";
 inline constexpr const char* kRulesReloadFailed =
-    "重新加载失败，继续使用上一次的规则集（原因见日志）。";
-inline constexpr const char* kRulesNone = "当前没有规则：rules.toml 为空，或所有规则都被跳过。";
+    "重新加载失败，恢复上一次的规则（具体见日志）";
+inline constexpr const char* kRulesNone = "当前没有规则：rules.toml 为空，或所有规则都被跳过";
 inline constexpr const char* kRulesSkippedFormat =
-    "有 %d 条规则因配置错误被跳过，详情见启动日志。";
+    "有 %d 条规则因配置错误被跳过，详情见启动日志";
 inline constexpr const char* kRulesCountFormat = "共 %d 条规则";
 inline constexpr const char* kRulesSafeModeHint =
-    "安全模式下不能改动启用状态：本次不会写回 config.toml。";
+    "安全模式下不能改动启用状态：本次不会写回 config.toml";
 inline constexpr const char* kColRuleEnabled = "启用";
 inline constexpr const char* kColRuleIndex = "#";
 inline constexpr const char* kColRuleHits = "命中 / 拦截";
@@ -302,10 +290,6 @@ inline constexpr const char* kRoutingNoSubscribers = "（没有 Notifier 会收�
 inline constexpr const char* kRoutingUnroutedFormat = "无订阅者 %lld 条";
 inline constexpr const char* kRoutingNoTopic = "内存历史里还没有出现过 topic。";
 inline constexpr const char* kRoutingNoNotifier = "当前没有已加载的 Notifier。";
-inline constexpr const char* kRoutingFooterFormat =
-    "路由由 config.toml 的 [routing] 与插件的元信息共同决定。要修改请编辑：%s";
-inline constexpr const char* kRoutingReadonly = "这一页只读：界面只负责让人看懂合并结果，"
-                                                "决定的唯一地方是配置文件。";
 inline constexpr const char* kColNotifier = "Notifier";
 inline constexpr const char* kColPatterns = "订阅模式";
 inline constexpr const char* kColReceivers = "会收到它的 Notifier";
@@ -336,7 +320,6 @@ inline constexpr const char* kPathPluginDir = "插件目录";
 inline constexpr const char* kPathLogFile = "当前日志文件";
 inline constexpr const char* kPathUiState = "界面状态文件";
 inline constexpr const char* kExitButton = "退出 SimpleMessage";
-inline constexpr const char* kExitHint = "走完整的关停顺序：停调度、停插件、卸载、写日志、退出。";
 
 inline constexpr const char* kBuildVersion = "版本";
 inline constexpr const char* kBuildDetail = "内部版本";
@@ -344,27 +327,24 @@ inline constexpr const char* kBuildApi = "API 版本";
 inline constexpr const char* kBuildType = "构建类型";
 inline constexpr const char* kBuildCompiler = "编译器";
 inline constexpr const char* kBuildPlatform = "目标平台";
-inline constexpr const char* kLicensePending = "未定 —— 本仓库尚未附上许可证（见 README 的许可一节）";
+inline constexpr const char* kLicensePending = "MIT";
 inline constexpr const char* kLicenseHint =
     "第三方依赖各自的许可证见下表；它们的全文随依赖一起放在 external/ 下。";
 
 inline constexpr const char* kFontSize = "界面字号";
-inline constexpr const char* kFontSizeHint =
-    "改动立即重建字体图集（会有一帧的停顿），并写回 config.toml 的 [app] ui_font_size。";
 inline constexpr const char* kFontFileFormat = "当前字体：%s";
 inline constexpr const char* kFontFallbackBuiltin =
-    "（内置字体）系统里几个常见中文字体都没找到，界面上的中文可能显示成问号。";
+    "（内置字体）系统里几个常见中文字体都没找到，界面上的中文可能显示成问号";
 
-inline constexpr const char* kHostStartedDetail = "SimpleMessage 已启动，插件与调度开始工作。";
-inline constexpr const char* kHostExitedDetail = "SimpleMessage 已退出本次运行。";
+inline constexpr const char* kHostStartedDetail = "SimpleMessage 已启动，插件与调度开始工作";
+inline constexpr const char* kHostExitedDetail = "SimpleMessage 已退出";
 inline constexpr const char* kConfigResetDetail =
-    "config.toml 读不出来或解析失败，原文件已改名备份，本次按默认值启动 —— 之前手工"
-    "改过的设置需要重新设置。";
+    "config.toml 无法读取，原文件已改名备份，本次按默认值启动";
 inline constexpr const char* kPluginSchemaTooNewDetail =
     "有插件的设置文件版本高于本宿主。为避免把它的内容覆盖成本宿主认识的格式，"
     "宿主拒绝启动（退出码 2）。";
 
-inline constexpr const char* kTrayTooltip = "SimpleMessage —— 通知聚合与投递";
+inline constexpr const char* kTrayTooltip = "SimpleMessage";
 inline constexpr const char* kTrayOpenPanel = "打开控制面板";
 inline constexpr const char* kTrayPause = "暂停调度";
 inline constexpr const char* kTrayOpenConfigDir = "打开配置目录";

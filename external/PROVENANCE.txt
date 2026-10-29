@@ -1,14 +1,15 @@
 SimpleMessage — external/ 下的第三方依赖来源记录
 ===============================================
 
-六棵树都是**被 git 跟踪的普通文件**，随仓库一起提交、一起克隆。
+七棵树都是**被 git 跟踪的普通文件**，随仓库一起提交、一起克隆。
 仓库里没有 .gitmodules，也没有任何子模块登记项。
 
 因此 `git clone` 之后依赖就已经在，不需要拉取步骤；
 `git submodule update --init --recursive` 会是"成功但什么都不做"。
 判断依赖是否就绪，看的是目录里有没有 external/imgui/imgui.cpp、
-external/tomlplusplus/toml.hpp、external/glfw/CMakeLists.txt 与
-external/miniaudio/miniaudio.h，不是任何命令的退出码。
+external/tomlplusplus/toml.hpp、external/glfw/CMakeLists.txt、
+external/miniaudio/miniaudio.h 与 external/WinToast/src/wintoastlib.cpp，
+不是任何命令的退出码。
 真正的获取链见 docs/02-宿主设计.md §20。
 
 具体下载时间与操作者未记录 —— 这正是这份文件本应记下、却已经缺失的部分，
@@ -109,6 +110,21 @@ external/miniaudio/miniaudio.h，不是任何命令的退出码。
              Windows / Linux / macOS 上都可用。版本差异主要影响支持的格式与
              后端列表，PlaySound 时代的"系统声音别名"在 miniaudio 里没有
              对应概念，插件已不再支持别名。
+
+依赖 7：WinToast
+----------------
+  版本       1.3.2（external/WinToast/include/wintoastlib.h 的文件头）
+  许可证     MIT（external/WinToast/LICENSE.txt）
+  来源 URL   https://github.com/mohabouje/WinToast
+  需要的文件 include/wintoastlib.h / src/wintoastlib.cpp
+  接入方式   external/CMakeLists.txt 把单个 cpp 编成 STATIC 库 sm::wintoast，
+             不使用上游 CMakeLists 的 examples；notifier.wintoast 链接它。
+  使用者     仅 notifier.wintoast 插件。
+  备注       WinToast 用 WinRT 的 ToastNotificationManager 弹系统通知，运行时从
+             shell32 / propsys / combase 动态取函数，不需要额外部署 DLL。
+             它的 WinToast::instance() 是 thread_local，所以插件把所有调用收敛
+             在自己的工作线程上；首次 initialize() 会在开始菜单创建 AUMI 快捷
+             方式。它需要 Windows 8+，SM_WIN7_COMPAT=ON 时不构建该插件。
 
 若将来想改成真正的 git 子模块
 -----------------------------

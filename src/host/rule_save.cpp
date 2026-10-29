@@ -162,7 +162,8 @@ bool RuleSaveSink::ShouldWarnLocked(const std::string& path) {
 }
 
 void RuleSaveSink::Save(const Rule& rule, const sm::Notification& view,
-                        bool delivery_phase, const std::string& notifier_id) {
+                        bool delivery_phase, const std::string& notifier_id,
+                        const std::string& path_template) {
   const std::int64_t time_ms =
       view.time_unix_ms > 0 ? view.time_unix_ms : util::now_unix_ms();
   const std::time_t seconds = static_cast<std::time_t>(time_ms / 1000);
@@ -231,7 +232,9 @@ void RuleSaveSink::Save(const Rule& rule, const sm::Notification& view,
   {
     std::lock_guard<std::mutex> lock(mutex_);
 
-    std::string pattern = rule.save.path;
+    // 捕获组已在规则层按 match 求值结果展开（并做了路径清洗）；
+    // 这里只继续展开 {name} 占位符。
+    std::string pattern = path_template;
     if (IsBlank(pattern)) pattern = kDefaultPathTemplate;
 
     std::string expanded =

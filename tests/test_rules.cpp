@@ -1106,3 +1106,204 @@ enabled = true
                             &other_hits);
   SM_CHECK(other_hits.empty());
 }
+
+// ---------------------------------------------------------------------------
+// save.path 的捕获组（与 rewrite 同格式）
+// ---------------------------------------------------------------------------
+
+SM_TEST(rules_save, path_expands_match_capture_groups) {
+  Parsed parsed = ParseRules(R"(
+schema_version = 1
+[[rules]]
+id = "archive"
+match = 'title =~ "^\[(.*)\] (.*)$"'
+[rules.save]
+path = "notify/$title.1/$title.2-$$.txt"
+)");
+  SM_CHECK_INT(parsed.set->size(), 1);
+  SM_CHECK_INT(parsed.set->skipped(), 0);
+
+  std::string title = "[Work] Hello";
+  std::string content = "body";
+  std::string summary;
+  std::string topic;
+  RuleFields fields(title, content, summary, topic, sm::Level::Info);
+  sm::host::RuleSaveHits hits;
+  RuleDiagnostics warnings;
+  SM_CHECK(parsed.set->ApplySource(&fields, "s", &warnings, &hits));
+  SM_CHECK_INT(hits.size(), 1);
+  if (hits.size() == 1) {
+    SM_CHECK_TEXT(hits[0].save_path, "notify/Work/Hello-$.txt");
+    SM_CHECK_TEXT(hits[0].title, "[Work] Hello");
+  }
+}
+
+SM_TEST(rules_save, path_capture_values_are_sanitized) {
+  Parsed parsed = ParseRules(R"(
+schema_version = 1
+[[rules]]
+id = "r"
+match = 'content =~ "^(.*)$"'
+[rules.save]
+path = "notify/$content.1.txt"
+)");
+  SM_CHECK_INT(parsed.set->size(), 1);
+
+  std::string title = "t";
+  std::string content = "../evil/path";
+  std::string summary;
+  std::string topic;
+  RuleFields fields(title, content, summary, topic, sm::Level::Info);
+  sm::host::RuleSaveHits hits;
+  RuleDiagnostics warnings;
+  SM_CHECK(parsed.set->ApplySource(&fields, "s", &warnings, &hits));
+  SM_CHECK_INT(hits.size(), 1);
+  if (hits.size() == 1) {
+    // 捕获组与 {name} 占位符一样按路径分量清洗，不能引入目录分隔符。
+    SM_CHECK_TEXT(hits[0].save_path, "notify/.._evil_path.txt");
+  }
+}
+
+SM_TEST(rules_save, path_capture_is_not_reinterpreted_as_placeholder) {
+  Parsed parsed = ParseRules(R"(
+schema_version = 1
+[[rules]]
+id = "r"
+match = 'content =~ "^(.*)$"'
+[rules.save]
+path = "notify/$content.1.txt"
+)");
+  SM_CHECK_INT(parsed.set->size(), 1);
+
+  std::string title = "t";
+  std::string content = "{year}";
+  std::string summary;
+  std::string topic;
+  RuleFields fields(title, content, summary, topic, sm::Level::Info);
+  sm::host::RuleSaveHits hits;
+  RuleDiagnostics warnings;
+  SM_CHECK(parsed.set->ApplySource(&fields, "s", &warnings, &hits));
+  SM_CHECK_INT(hits.size(), 1);
+  if (hits.size() == 1) {
+    // 捕获值是字面量：花括号被转义，保存器不会再把它当 {year} 展开。
+    SM_CHECK_TEXT(hits[0].save_path, "notify/{{year}}.txt");
+  }
+}
+
+SM_TEST(rules_save, path_capture_out_of_range_skips_rule) {
+  Parsed parsed = ParseRules(R"TOML(
+schema_version = 1
+[[rules]]
+id = "r"
+match = 'title =~ "(a)"'
+[rules.save]
+path = "$title.2.txt"
+)TOML");
+  SM_CHECK_INT(parsed.set->size(), 0);
+  SM_CHECK_INT(parsed.set->skipped(), 1);
+  SM_CHECK(HasMessage(parsed.diagnostics, "save.path 模板无效"));
+  SM_CHECK(HasMessage(parsed.diagnostics, "超出捕获组数量"));
+}
+
+SM_TEST(rules_save, path_capture_without_positive_match_skips_rule) {
+  Parsed parsed = ParseRules(R"TOML(
+schema_version = 1
+[[rules]]
+id = "r"
+match = 'title =~ "(a)"'
+[rules.save]
+path = "$content.1.txt"
+)TOML");
+  SM_CHECK_INT(parsed.set->size(), 0);
+  SM_CHECK_INT(parsed.set->skipped(), 1);
+  SM_CHECK(HasMessage(parsed.diagnostics, "save.path 模板无效"));
+}
+
+SM_TEST(rules_save, path_missing_runtime_capture_becomes_empty) {
+  Parsed parsed = ParseRules(R"(
+schema_version = 1
+[[rules]]
+id = "r"
+match = 'title =~ "^(x)$" or content =~ "^(y)$"'
+[rules.save]
+path = "$title.1.txt"
+)");
+  SM_CHECK_INT(parsed.set->size(), 1);
+
+  std::string title = "nope";
+  std::string content = "y";
+  std::string summary;
+  std::string topic;
+  RuleFields fields(title, content, summary, topic, sm::Level::Info);
+  sm::host::RuleSaveHits hits;
+  RuleDiagnostics warnings;
+  SM_CHECK(parsed.set->ApplySource(&fields, "s", &warnings, &hits));
+  SM_CHECK_INT(hits.size(), 1);
+  if (hits.size() == 1) {
+    SM_CHECK_TEXT(hits[0].save_path, ".txt");
+  }
+  SM_CHECK(HasMessage(warnings, "save.path 引用了未参与求值"));
+}
+
+SM_TEST(rules_save, path_capture_uses_match_before_own_rewrite) {
+  // 第二条规则同时改写 title 与保存；捕获组取自改写前的匹配，
+  // 且 save.path 的展开不能被 rewrite 改写缓冲区影响。
+  Parsed parsed = ParseRules(R"(
+schema_version = 1
+[[rules]]
+id = "first"
+match = 'title =~ "^(.*)$"'
+[rules.rewrite]
+title = "A-$title.1"
+[[rules]]
+id = "second"
+match = 'title =~ "^A-(.*)$"'
+[rules.rewrite]
+title = "B-$title.1"
+[rules.save]
+path = "out/$title.1.txt"
+)");
+  SM_CHECK_INT(parsed.set->size(), 2);
+
+  std::string title = "orig";
+  std::string content = "body";
+  std::string summary;
+  std::string topic;
+  RuleFields fields(title, content, summary, topic, sm::Level::Info);
+  sm::host::RuleSaveHits hits;
+  RuleDiagnostics warnings;
+  SM_CHECK(parsed.set->ApplySource(&fields, "s", &warnings, &hits));
+  SM_CHECK_INT(hits.size(), 1);
+  if (hits.size() == 1) {
+    SM_CHECK_TEXT(hits[0].save_path, "out/orig.txt");
+    SM_CHECK_TEXT(hits[0].title, "B-orig");
+  }
+}
+
+SM_TEST(rules_save, delivery_path_expands_capture_groups) {
+  Parsed parsed = ParseRules(R"(
+schema_version = 1
+[[rules]]
+id = "deliver"
+match = 'content =~ "^id=(\d+)$"'
+[rules.target]
+notifier = ["^notifier.test$"]
+[rules.save]
+path = "notify/$content.1.txt"
+)");
+  SM_CHECK_INT(parsed.set->size(), 1);
+
+  std::string title = "x";
+  std::string content = "id=42";
+  std::string summary;
+  std::string topic;
+  RuleFields fields(title, content, summary, topic, sm::Level::Info);
+  sm::host::RuleSaveHits hits;
+  RuleDiagnostics warnings;
+  SM_CHECK(parsed.set->ApplyDelivery(&fields, "s", "notifier.test", &warnings,
+                                     &hits));
+  SM_CHECK_INT(hits.size(), 1);
+  if (hits.size() == 1) {
+    SM_CHECK_TEXT(hits[0].save_path, "notify/42.txt");
+  }
+}

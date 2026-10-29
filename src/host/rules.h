@@ -45,7 +45,8 @@ struct RuleTarget {
 
 struct RuleSave {
   bool        enabled = false;
-  // 占位符模板；空 = 默认路径 data_dir/notify/{ruleid}.txt。
+  // 占位符模板：支持 {name} 与 $字段.组号（后者与 rewrite 同格式）；
+  // 空 = 默认路径 data_dir/notify/{ruleid}.txt。
   std::string path;
 };
 
@@ -54,6 +55,9 @@ struct RuleSave {
 // 不会保存未重写的原文；同趟后续规则的改写也不会混进来。
 struct RuleSaveHit {
   std::size_t rule_index = 0;
+  // save.path 里的 $字段.组号 已按本条规则的 match 求值结果展开；
+  // 空串表示规则没有写 save.path（保存器使用默认路径）。
+  std::string save_path;
   std::string title;
   std::string content;
   std::string summary;

@@ -5,7 +5,7 @@ include_guard(GLOBAL)
 option(SM_BUILD_HOST
        "构建宿主可执行文件（本仓库当前只包含 CMake 骨架与占位 main）" ON)
 option(SM_BUILD_SAMPLES
-       "构建随附的示例插件（source.email / source.gotify / source.webhook / notifier.imgui / notifier.console / notifier.sound）" ON)
+       "构建随附的示例插件（source.email / source.gotify / source.webhook / notifier.imgui / notifier.console / notifier.sound / notifier.wintoast）" ON)
 option(SM_BUILD_TEST_PLUGINS
        "构建测试坏插件（plugins/_test 与 plugins/_badmeta）" OFF)
 option(SM_BUILD_TESTS "构建 SDK 纯函数单元测试（ctest 驱动）" ON)

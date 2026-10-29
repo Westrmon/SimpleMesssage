@@ -25,6 +25,13 @@ endfunction()
 if(SM_BUILD_SAMPLES)
     sm_add_plugin(notifier.console)
 
+    if(SM_HAVE_WINTOAST)
+        sm_add_plugin(notifier.wintoast)
+        target_link_libraries(notifier.wintoast PRIVATE sm::wintoast)
+    else()
+        message(STATUS "跳过 notifier.wintoast：WinToast 不可用。")
+    endif()
+
     if(SM_HAVE_MINIAUDIO)
         sm_add_plugin(notifier.sound)
         target_link_libraries(notifier.sound PRIVATE sm::miniaudio)

@@ -2,6 +2,7 @@ set(_sm_have_imgui FALSE)
 set(_sm_have_tomlpp FALSE)
 set(_sm_have_glfw FALSE)
 set(_sm_have_miniaudio FALSE)
+set(_sm_have_wintoast FALSE)
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/miniaudio/miniaudio.h")
     add_library(sm_miniaudio STATIC miniaudio/miniaudio_impl.cpp)
@@ -80,6 +81,31 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/miniaudio/miniaudio.h")
 else()
     message(WARNING
         "找不到 external/miniaudio/miniaudio.h —— notifier.sound 插件将被跳过。")
+endif()
+
+if(WIN32 AND NOT SM_WIN7_COMPAT
+   AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/WinToast/src/wintoastlib.cpp")
+    add_library(sm_wintoast STATIC WinToast/src/wintoastlib.cpp)
+    add_library(sm::wintoast ALIAS sm_wintoast)
+
+    target_include_directories(sm_wintoast PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/WinToast/include")
+    target_compile_features(sm_wintoast PUBLIC cxx_std_17)
+    target_link_libraries(sm_wintoast PUBLIC
+        ole32 propsys psapi shlwapi user32)
+
+    if(MSVC)
+        target_compile_options(sm_wintoast PRIVATE /W3 /utf-8)
+        set_property(TARGET sm_wintoast PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
+    endif()
+
+    set(_sm_have_wintoast TRUE)
+elseif(WIN32 AND SM_WIN7_COMPAT)
+    message(STATUS
+        "SM_WIN7_COMPAT=ON：跳过 WinToast 与 notifier.wintoast（原生 Toast 需要 Windows 8+）。")
+elseif(WIN32)
+    message(WARNING
+        "找不到 external/WinToast/src/wintoastlib.cpp —— notifier.wintoast 插件将被跳过。")
 endif()
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/imgui/imgui.cpp")
@@ -227,6 +253,7 @@ else()
 endif()
 
 set(SM_HAVE_MINIAUDIO ${_sm_have_miniaudio} PARENT_SCOPE)
+set(SM_HAVE_WINTOAST ${_sm_have_wintoast} PARENT_SCOPE)
 set(SM_HAVE_IMGUI  ${_sm_have_imgui}  PARENT_SCOPE)
 set(SM_HAVE_TOMLPP ${_sm_have_tomlpp} PARENT_SCOPE)
 set(SM_HAVE_GLFW   ${_sm_have_glfw}   PARENT_SCOPE)

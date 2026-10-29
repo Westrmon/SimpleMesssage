@@ -74,6 +74,7 @@ graph TD
     H --> N1[notifier.imgui<br/>浮层 + 详情]
     H --> N2[notifier.console<br/>写入日志]
     H --> N3[notifier.sound<br/>播放提示音]
+    H --> N4[notifier.wintoast<br/>Windows 原生 Toast]
     H --> P[控制面板<br/>历史 / 规则 / 路由]
 ```
 
@@ -106,6 +107,22 @@ cmake -B build
 cmake --build build --config Release --parallel
 ```
 
+也可以直接用仓库根目录的脚本；默认配置 `Release`、构建目录 `build`：
+
+```sh
+./build.sh                    # Git Bash / Linux / macOS
+./build.sh --clean --test     # 删除构建目录后重新配置并运行 ctest
+```
+
+```powershell
+.\build.ps1
+.\build.ps1 -Clean -Test
+```
+
+常用参数：`--config` / `-Config`、`--build-dir` / `-BuildDir`、`--clean` / `-Clean`、
+`--test` / `-Test`、`--no-tests` / `-NoTests`、`--no-samples` / `-NoSamples`、
+`--win7-compat` / `-Win7Compat`。
+
 产物位于 `build/Release/`：
 
 ```text
@@ -116,6 +133,7 @@ plugins/
   notifier.console.dll
   notifier.imgui.dll
   notifier.sound.dll
+  notifier.wintoast.dll
   source.email.dll
   source.gotify.dll
   source.webhook.dll
@@ -323,6 +341,7 @@ SM_DEFINE_PLUGIN(kMeta, Example);
 | `notifier.imgui` | Notifier | 通知浮层 + 详情视图，展示 `request_ui_surface` / `invoke_action` |
 | `notifier.console` | Notifier | 把通知写进日志，最小可用 Notifier（无 UI） |
 | `notifier.sound` | Notifier | 按通知级别播放 WAV / MP3，可调音量 |
+| `notifier.wintoast` | Notifier | 用 WinToast 弹出 Windows 原生 Toast（仅 Windows 8+） |
 
 `notifier.imgui` 的常用设置：`toast_duration_sec`（0–120，**0 表示常驻不自动消失**）、`max_toasts`、`toast_width_min` / `toast_width_max`、`show_actions`。
 
@@ -343,7 +362,7 @@ dotnet publish -c Release -r win-x64
 | `include/sm/` | SDK 公共头。插件作者唯一需要的东西（**接口已冻结**） |
 | `src/platform/` | 平台层：窗口、文件、系统、控制台、对话框、图片、托盘、入口等抽象 + Win32 实现 |
 | `src/host/` | 宿主实现：日志、配置、插件管理、调度器、通知管线、路由、规则、UI、控制面板 |
-| `plugins/` | 六个 C++ 示例插件；`source.csharp` 为独立 .NET 示例；`_test` / `_badmeta` 为坏插件 |
+| `plugins/` | 七个 C++ 示例插件；`source.csharp` 为独立 .NET 示例；`_test` / `_badmeta` 为坏插件 |
 | `tests/` | SDK 与宿主纯函数单元测试 |
 | `scripts/` | 开机自启的注册/撤销脚本（Windows / Linux） |
 | `external/` | 第三方依赖源码与构建脚本 |
@@ -354,7 +373,7 @@ dotnet publish -c Release -r win-x64
 | 选项 | 默认 | 说明 |
 |---|---|---|
 | `SM_BUILD_HOST` | ON | 构建宿主可执行文件 |
-| `SM_BUILD_SAMPLES` | ON | 构建六个 C++ 示例插件 |
+| `SM_BUILD_SAMPLES` | ON | 构建七个 C++ 示例插件 |
 | `SM_BUILD_TEST_PLUGINS` | OFF | 构建 `plugins/_test/` 与 `plugins/_badmeta/` 的坏插件到 `plugins_test/` |
 | `SM_BUILD_TESTS` | ON | 构建单元测试 |
 | `SM_WIN7_COMPAT` | OFF | Windows 7 SP1 最佳努力配置 |
@@ -398,7 +417,7 @@ CI（`.github/workflows/ci.yml`）在 Windows x64 上构建、运行 ctest、检
 | [插件开发入门](docs/插件开发/01-入门.md) | 最小插件、四个导出符号、加载校验、线程与内存规则 |
 | [SDK 接口参考](docs/插件开发/02-SDK接口参考.md) | 逐符号 API 参考 |
 | [配置格式](docs/插件开发/03-配置格式.md) | `config.toml`、`rules.toml`、插件设置文件的全部键 |
-| [示例插件](docs/插件开发/04-示例插件.md) | 六个示例插件的设置项与设计要点 |
+| [示例插件](docs/插件开发/04-示例插件.md) | 七个示例插件的设置项与设计要点 |
 
 ## 贡献
 
@@ -423,5 +442,6 @@ CI（`.github/workflows/ci.yml`）在 Windows x64 上构建、运行 ctest、检
 | **libcurl** | 8.23.1-DEV | curl | 宿主图标下载、`source.email`、`source.gotify`（共享库 `sm_curl.dll`） |
 | **cpp-httplib** | v0.61.0 | MIT | `source.webhook` |
 | **miniaudio** | v0.11.25 | MIT | 宿主与 `notifier.sound` |
+| **WinToast** | v1.3.2 | MIT | `notifier.wintoast`（静态链接） |
 
 各许可证全文见 [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt)，版本锁定与来源见 `external/PROVENANCE.txt`。
