@@ -23,6 +23,8 @@ jobs:
     steps:
       - name: 检出
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: 配置
         shell: pwsh
@@ -88,7 +90,8 @@ jobs:
     steps:
       - name: 检出
         uses: actions/checkout@v4
-
+        with:
+          submodules: recursive
       - name: 安装或确认 v142 与 Windows SDK
         shell: pwsh
         run: |
